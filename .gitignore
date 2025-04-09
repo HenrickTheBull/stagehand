@@ -1,1 +1,9 @@
-# Environment variables\n.env
+# Environment variables
+.env
+
+# Queue files
+queue/queue.json
+queue/queue.json.backup
+
+# Dependencies
+node_modules/

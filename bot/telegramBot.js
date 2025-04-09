@@ -240,7 +240,6 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
         config.channelId,
         imageData.imageUrl,
         {
-          caption: imageData.title,
           reply_markup: inlineKeyboard
         }
       );
@@ -261,7 +260,6 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
           config.channelId,
           imageResponse.data,
           {
-            caption: imageData.title,
             reply_markup: {
               inline_keyboard: [
                 [

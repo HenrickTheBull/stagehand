@@ -1,0 +1,37 @@
+{
+  "name": "stagehand",
+  "version": "1.0.0",
+  "description": "Telegram bot for queuing and posting images from various social sites",
+  "main": "index.js",
+  "scripts": {
+    "start": "pm2 start ecosystem.config.js",
+    "stop": "pm2 stop stagehand",
+    "restart": "pm2 restart stagehand",
+    "logs": "pm2 logs stagehand",
+    "status": "pm2 status stagehand",
+    "save": "pm2 save",
+    "dev": "nodemon index.js",
+    "start:node": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "image",
+    "queue"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@atproto/api": "^0.14.21",
+    "axios": "^1.4.0",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.0.3",
+    "fs-extra": "^11.1.1",
+    "node-cron": "^3.0.2",
+    "node-telegram-bot-api": "^0.61.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

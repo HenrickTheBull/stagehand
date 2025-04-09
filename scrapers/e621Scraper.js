@@ -9,6 +9,12 @@ class E621Scraper extends BaseScraper {
     return e621Pattern.test(url);
   }
 
+  // Helper function to convert sample URLs to full-size URLs
+  convertToFullSizeUrl(imageUrl) {
+    // Replace "sample/" in the path with nothing to get full size image
+    return imageUrl.replace('/data/sample/', '/data/');
+  }
+
   async extract(url) {
     try {
       // Use a common user agent to avoid being blocked
@@ -33,14 +39,14 @@ class E621Scraper extends BaseScraper {
         }
         
         return {
-          imageUrl,
+          imageUrl: this.convertToFullSizeUrl(imageUrl),
           sourceUrl: url,
           title: $('.post-info h1').text() || 'e621 Post'
         };
       }
 
       return {
-        imageUrl: ogImage,
+        imageUrl: this.convertToFullSizeUrl(ogImage),
         sourceUrl: ogUrl,
         title: ogTitle || 'e621 Post',
         siteName: 'e621'

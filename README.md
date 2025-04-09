@@ -13,7 +13,7 @@ A Telegram bot that takes links from supported websites, extracts images, and qu
 
 ## Supported Websites
 
-- e621 (Using e621 API with rate limit)
+- e621 (Using basic OpenGraph Scraping)
 - FurAffinity
 - SoFurry
 - Weasyl
@@ -128,3 +128,11 @@ To add support for a new website:
 ## License
 
 ISC
+
+## ToDo List
+
+- [x] ATProto Implementation
+- [x] Basic e621 Scraper
+- [ ] FurAffinity Scraper
+- [ ] SoFurry Scraper
+- [ ] Weasyl Scraper

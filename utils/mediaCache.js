@@ -179,24 +179,30 @@ class MediaCache {
    * @returns {boolean} - Whether URL is likely a video
    */
   isVideoUrl(url, contentType) {
-    // Check URL extension first
+    // Check content type first (prioritize MIME type)
+    if (contentType && contentType.toLowerCase().startsWith('video/')) {
+      return true;
+    }
+    
+    // Special handling for GIFs - they can be considered videos if they need transcoding
+    if (contentType && contentType.toLowerCase() === 'image/gif') {
+      // This could be refined further to check if it's an animated GIF
+      // For now, we'll let the calling code make that decision
+      return false;
+    }
+    
+    // If no content type, fall back to URL extension check
     const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
     const urlExt = path.extname(url).toLowerCase();
     if (videoExtensions.includes(urlExt)) {
       return true;
     }
     
-    // Check content type
-    if (contentType && contentType.toLowerCase().startsWith('video/')) {
-      return true;
-    }
-    
-    // Check URL for video-specific patterns
+    // Check URL for video-specific patterns as last resort
     const videoPatterns = [
       /\/video\//i,
       /\.mp4/i,
       /\.webm/i,
-      /\.gif/i,  // Add GIF pattern to detect animated GIFs
       /bluesky.*video/i
     ];
     
@@ -354,24 +360,31 @@ class MediaCache {
     // Download and cache the media
     const { filePath, contentType, isVideo: detectedVideo } = await this.downloadMedia(url, isVideo);
     
-    // Check if it's actually an image file despite being detected as video
-    const ext = path.extname(filePath).toLowerCase();
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'];
-    const isActuallyImage = imageExtensions.includes(ext);
+    // Determine if it's a video based primarily on MIME type
+    const isVideoContent = contentType && contentType.toLowerCase().startsWith('video/');
     
-    // Special handling for GIFs - treat animated GIFs as video if they were detected as such
-    const isGif = ext === '.gif';
+    // Special handling for GIFs based on MIME type
+    const isGif = contentType === 'image/gif';
     
-    // Only transcode if:
-    // 1. It's really a video (not a static image with incorrect detection)
-    // 2. Or it's a GIF that was detected as video (likely animated)
-    if ((detectedVideo && !isActuallyImage) || (isGif && detectedVideo)) {
+    // Fallback to extension check only if MIME type is unavailable
+    let isActuallyImage = false;
+    if (!contentType) {
+      const ext = path.extname(filePath).toLowerCase();
+      const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'];
+      isActuallyImage = imageExtensions.includes(ext);
+    }
+    
+    // Transcode decision based primarily on MIME type:
+    // 1. If it has a video MIME type, transcode it
+    // 2. If it's a GIF and was detected as video (likely animated), transcode it
+    // 3. If we don't have MIME type but it was detected as video and isn't obviously an image, transcode it
+    if (isVideoContent || (isGif && detectedVideo) || (!contentType && detectedVideo && !isActuallyImage)) {
       const transcodedPath = await this.transcodeVideo(filePath);
       return { localPath: transcodedPath, isVideo: true, contentType };
     }
     
-    // For images (including non-animated GIFs), just return the cached path
-    return { localPath: filePath, isVideo: isActuallyImage || isGif ? false : detectedVideo, contentType };
+    // For images or files without video MIME types, just return the cached path
+    return { localPath: filePath, isVideo: isVideoContent || (isGif && detectedVideo) || (!contentType && detectedVideo), contentType };
   }
 
   /**

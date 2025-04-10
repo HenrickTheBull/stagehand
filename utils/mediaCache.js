@@ -1,4 +1,3 @@
-// filepath: /home/hstafford/programming/stagehand/utils/mediaCache.js
 const fs = require('fs-extra');
 const path = require('path');
 const axios = require('axios');
@@ -197,6 +196,7 @@ class MediaCache {
       /\/video\//i,
       /\.mp4/i,
       /\.webm/i,
+      /\.gif/i,  // Add GIF pattern to detect animated GIFs
       /bluesky.*video/i
     ];
     
@@ -354,14 +354,24 @@ class MediaCache {
     // Download and cache the media
     const { filePath, contentType, isVideo: detectedVideo } = await this.downloadMedia(url, isVideo);
     
-    // If it's a video, transcode it
-    if (detectedVideo) {
+    // Check if it's actually an image file despite being detected as video
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'];
+    const isActuallyImage = imageExtensions.includes(ext);
+    
+    // Special handling for GIFs - treat animated GIFs as video if they were detected as such
+    const isGif = ext === '.gif';
+    
+    // Only transcode if:
+    // 1. It's really a video (not a static image with incorrect detection)
+    // 2. Or it's a GIF that was detected as video (likely animated)
+    if ((detectedVideo && !isActuallyImage) || (isGif && detectedVideo)) {
       const transcodedPath = await this.transcodeVideo(filePath);
       return { localPath: transcodedPath, isVideo: true, contentType };
     }
     
-    // For images, just return the cached path
-    return { localPath: filePath, isVideo: false, contentType };
+    // For images (including non-animated GIFs), just return the cached path
+    return { localPath: filePath, isVideo: isActuallyImage || isGif ? false : detectedVideo, contentType };
   }
 
   /**

@@ -279,7 +279,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
             config.channelId,
             mediaData.videoUrl,
             {
-              caption: mediaData.title,
+              // Removed the caption
               reply_markup: inlineKeyboard
             }
           );
@@ -291,7 +291,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
               config.channelId,
               mediaData.videoUrl,
               {
-                caption: mediaData.title,
+                // Removed the caption
                 reply_markup: inlineKeyboard
               }
             );
@@ -305,7 +305,8 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
                 config.channelId,
                 mediaData.imageUrl,
                 {
-                  caption: `${mediaData.title} (Video post - see original)`,
+                  // Removed the caption, only indicating this is a video post
+                  caption: "(Video post - see original)",
                   reply_markup: inlineKeyboard
                 }
               );
@@ -326,7 +327,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
           config.channelId,
           mediaData.imageUrl,
           {
-            caption: mediaData.title,
+            // Removed the caption
             reply_markup: inlineKeyboard
           }
         );
@@ -338,7 +339,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
             config.channelId,
             mediaData.imageUrl,
             {
-              caption: mediaData.title,
+              // Removed the caption
               reply_markup: inlineKeyboard
             }
           );
@@ -358,7 +359,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
               config.channelId,
               imageResponse.data,
               {
-                caption: mediaData.title,
+                // Removed the caption
                 reply_markup: inlineKeyboard
               }
             );

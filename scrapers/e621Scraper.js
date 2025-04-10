@@ -1,6 +1,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const BaseScraper = require('./baseScraper');
+const mediaCache = require('../utils/mediaCache');
 const config = require('../config');
 
 class E621Scraper extends BaseScraper {
@@ -19,32 +20,68 @@ class E621Scraper extends BaseScraper {
       const response = await axios.get(url, { headers });
       const $ = cheerio.load(response.data);
       
+      // Check for download link - for both images and videos
+      let mediaUrl = $('#image-download-link').attr('href') || 
+                     $('a[download]').attr('href') || 
+                     $('#image').attr('src');
+      
       // Extract OpenGraph data
       const ogImage = $('meta[property="og:image"]').attr('content');
-      const ogTitle = $('meta[property="og:title"]').attr('content');
       const ogUrl = $('meta[property="og:url"]').attr('content') || url;
-
-      // If we couldn't get the OpenGraph image, fallback to other methods
-      if (!ogImage) {
-        // Try to find the image in the post content
-        const imageUrl = $('#image').attr('src') || $('.preview-container img').attr('src');
-        if (!imageUrl) {
-          throw new Error('Could not find image on e621 page');
+      
+      // Find potential video sources
+      let videoUrl = $('video source').attr('src') || 
+                    $('video').attr('src') || 
+                    $('a:contains("original")').attr('href');
+      
+      // Use OpenGraph image if direct media URL not found
+      if (!mediaUrl && ogImage) {
+        mediaUrl = ogImage;
+      }
+      
+      // Determine if we're dealing with a video post
+      const isVideo = videoUrl || this.isVideoUrl(mediaUrl);
+      
+      // If it's a video, use the direct video URL
+      if (isVideo && videoUrl) {
+        mediaUrl = videoUrl;
+      }
+      
+      if (!mediaUrl) {
+        throw new Error('Could not find media on e621 page');
+      }
+      
+      // Make sure URLs are absolute
+      if (!mediaUrl.startsWith('http')) {
+        if (mediaUrl.startsWith('//')) {
+          mediaUrl = 'https:' + mediaUrl;
+        } else if (mediaUrl.startsWith('/')) {
+          mediaUrl = 'https://e621.net' + mediaUrl;
         }
-        
+      }
+      
+      // Process and cache the media
+      const processed = await mediaCache.processMediaUrl(mediaUrl, isVideo);
+      
+      // Return appropriate data structure based on media type with generic title
+      if (processed.isVideo) {
         return {
-          imageUrl,
-          sourceUrl: url,
-          title: $('.post-info h1').text() || 'e621 Post'
+          imageUrl: processed.localPath, // For video, this will be the transcoded video
+          videoUrl: processed.localPath,
+          isVideo: true,
+          sourceUrl: ogUrl || url,
+          title: "e621 Video", // Generic title without post-specific text
+          siteName: 'e621'
+        };
+      } else {
+        return {
+          imageUrl: processed.localPath,
+          sourceUrl: ogUrl || url,
+          title: "e621 Image", // Generic title without post-specific text
+          siteName: 'e621',
+          isVideo: false
         };
       }
-
-      return {
-        imageUrl: ogImage,
-        sourceUrl: ogUrl,
-        title: ogTitle || 'e621 Post',
-        siteName: 'e621'
-      };
     } catch (error) {
       console.error('Error extracting data from e621:', error);
       throw new Error(`Failed to extract data from e621: ${error.message}`);

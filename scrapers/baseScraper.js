@@ -12,12 +12,32 @@ class BaseScraper {
   }
 
   /**
-   * Extract image data from the given URL
+   * Extract media data from the given URL
    * @param {string} url - The URL to extract from
-   * @returns {Promise<{imageUrl: string, sourceUrl: string, title: string}>} - Extracted image data
+   * @returns {Promise<{imageUrl: string, videoUrl?: string, isVideo?: boolean, sourceUrl: string, title: string, siteName: string}>} - Extracted media data
    */
   async extract(url) {
     throw new Error('Method extract must be implemented by subclass');
+  }
+
+  /**
+   * Determine if a URL points to a video resource
+   * Common video extensions that should be detected
+   * @param {string} url - URL to check
+   * @returns {boolean} - Whether the URL is likely a video
+   */
+  isVideoUrl(url) {
+    if (!url) return false;
+    
+    const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
+    const urlLower = url.toLowerCase();
+    
+    // Check for video extensions
+    return videoExtensions.some(ext => urlLower.endsWith(ext)) ||
+           // Check for video in path segments
+           urlLower.includes('/video/') ||
+           // Check for video-specific patterns in various sites
+           urlLower.includes('video.bsky.app');
   }
 }
 

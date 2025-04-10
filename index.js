@@ -1,6 +1,7 @@
 require('dotenv').config();
 const StagehandBot = require('./bot/telegramBot');
 const queueManager = require('./queue/queueManager');
+const mediaCache = require('./utils/mediaCache');
 
 // Check if required environment variables are set
 if (!process.env.BOT_TOKEN) {
@@ -17,6 +18,10 @@ let bot;
 
 // Initialize the bot
 try {
+  // Initialize media cache first
+  console.log('Initializing media cache...');
+  
+  // Initialize the bot
   bot = new StagehandBot();
   console.log('Stagehand bot started successfully');
   console.log(`Posting to channel: ${process.env.CHANNEL_ID}`);
@@ -29,6 +34,12 @@ try {
       // Save queue state
       await queueManager.shutdown();
       console.log('Queue state saved successfully');
+      
+      // Clean up the media cache
+      if (mediaCache.shutdown) {
+        await mediaCache.shutdown();
+        console.log('Media cache shutdown complete');
+      }
       
       // Additional bot cleanup if needed
       if (bot.shutdown) {
@@ -52,8 +63,13 @@ try {
     try {
       await queueManager.shutdown();
       console.log('Queue state saved after uncaught exception');
+      
+      if (mediaCache.shutdown) {
+        await mediaCache.shutdown();
+        console.log('Media cache shutdown after uncaught exception');
+      }
     } catch (err) {
-      console.error('Failed to save queue state after exception:', err);
+      console.error('Failed to shut down properly after exception:', err);
     }
     process.exit(1);
   });

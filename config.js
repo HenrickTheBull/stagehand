@@ -14,6 +14,10 @@ module.exports = {
   imagesPerInterval: parseInt(process.env.IMAGES_PER_INTERVAL || '1', 10),
   queueFilePath: process.env.QUEUE_FILE_PATH || path.join(__dirname, 'queue', 'queue.json'),
   
+  // Media cache configuration
+  cacheDir: process.env.CACHE_DIR || path.join(__dirname, 'cache'),
+  maxCacheAgeDays: parseInt(process.env.MAX_CACHE_AGE_DAYS || '15', 10),
+  
   // Bluesky configuration
   bluesky: {
     service: process.env.BLUESKY_SERVICE || 'https://bsky.social'

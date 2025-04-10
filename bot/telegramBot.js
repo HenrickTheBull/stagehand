@@ -1,8 +1,10 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const fs = require('fs');
 const config = require('../config');
 const queueManager = require('../queue/queueManager');
 const scraperManager = require('../utils/scraperManager');
+const mediaCache = require('../utils/mediaCache');
 
 class StagehandBot {
   constructor() {
@@ -33,6 +35,7 @@ Stagehand Bot Commands:
 /schedule [cron] - Set posting schedule (cron syntax)
 /setcount [number] - Set number of images per scheduled post (default: 1)
 /clear - Clear the queue
+/cleancache - Clean expired items from media cache
 
 Send any link to a supported site to add it to the queue.
 Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
@@ -56,7 +59,8 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       if (queueLength > 0) {
         response += '\n\nNext 5 items:';
         for (let i = 0; i < Math.min(5, queueLength); i++) {
-          response += `\n${i + 1}. ${queue[i].title} (${queue[i].siteName})`;
+          const itemType = queue[i].isVideo ? '🎬 Video' : '🖼️ Image';
+          response += `\n${i + 1}. ${itemType}: ${queue[i].title} (${queue[i].siteName})`;
         }
       }
       
@@ -72,17 +76,37 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
         return;
       }
       
-      const nextImage = await queueManager.getNextFromQueue();
+      const nextItem = await queueManager.getNextFromQueue();
       
-      if (!nextImage) {
+      if (!nextItem) {
         this.bot.sendMessage(chatId, 'Queue is empty, nothing to post.');
         return;
       }
       
-      await this.postImage(nextImage);
+      await this.postMedia(nextItem);
       await queueManager.removeFromQueue();
       
-      this.bot.sendMessage(chatId, 'Image posted to channel.');
+      const itemType = nextItem.isVideo ? 'Video' : 'Image';
+      this.bot.sendMessage(chatId, `${itemType} posted to channel.`);
+    });
+
+    // Command to clean cache
+    this.bot.onText(/\/cleancache/, async (msg) => {
+      const chatId = msg.chat.id;
+      
+      if (!this.isAuthorized(msg.from.id)) {
+        this.bot.sendMessage(chatId, 'You are not authorized to use this command.');
+        return;
+      }
+      
+      this.bot.sendMessage(chatId, 'Cleaning media cache...');
+      
+      try {
+        await mediaCache.cleanupCache();
+        this.bot.sendMessage(chatId, 'Media cache cleaned successfully.');
+      } catch (error) {
+        this.bot.sendMessage(chatId, `Error cleaning cache: ${error.message}`);
+      }
     });
 
     // Command to set posting schedule
@@ -145,10 +169,19 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
         return;
       }
       
-      await queueManager.ensureQueueFileExists();
-      await queueManager.removeFromQueue(0, await queueManager.getQueueLength());
+      const queueLength = await queueManager.getQueueLength();
       
-      this.bot.sendMessage(chatId, 'Queue cleared.');
+      if (queueLength === 0) {
+        this.bot.sendMessage(chatId, 'Queue is already empty.');
+        return;
+      }
+      
+      // Clear the queue by removing all items
+      for (let i = 0; i < queueLength; i++) {
+        await queueManager.removeFromQueue(0);
+      }
+      
+      this.bot.sendMessage(chatId, `Queue cleared (${queueLength} items removed).`);
     });
 
     // Handle URL links
@@ -166,25 +199,26 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
           
           this.bot.sendMessage(chatId, 'Processing link...', { reply_to_message_id: msg.message_id });
           
-          const imageData = await scraperManager.extractFromUrl(url);
+          const mediaData = await scraperManager.extractFromUrl(url);
           
           // Check if the scraper returned an error (for temporarily disabled scrapers)
-          if (imageData.error) {
+          if (mediaData.error) {
             this.bot.sendMessage(
               chatId,
-              imageData.error,
+              mediaData.error,
               { reply_to_message_id: msg.message_id }
             );
             return;
           }
           
-          await queueManager.addToQueue(imageData);
+          await queueManager.addToQueue(mediaData);
           
           const queueLength = await queueManager.getQueueLength();
+          const mediaType = mediaData.isVideo ? 'Video' : 'Image';
           
           this.bot.sendMessage(
             chatId, 
-            `Added to queue: ${imageData.title}\nCurrent queue length: ${queueLength}`,
+            `Added to queue: ${mediaType} - ${mediaData.title}\nCurrent queue length: ${queueLength}`,
             { reply_to_message_id: msg.message_id }
           );
         } catch (error) {
@@ -208,7 +242,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
   }
 
   startScheduler() {
-    queueManager.startScheduler(this.postImage.bind(this));
+    queueManager.startScheduler(this.postMedia.bind(this));
   }
 
   restartScheduler() {
@@ -217,11 +251,11 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
   }
 
   /**
-   * Post an image to the Telegram channel
-   * @param {Object} imageData - The image data to post
+   * Post media (image or video) to the Telegram channel
+   * @param {Object} mediaData - The media data to post
    * @returns {Promise<boolean>} - Whether posting was successful
    */
-  async postImage(imageData) {
+  async postMedia(mediaData) {
     try {
       // Create inline keyboard with link to source
       const inlineKeyboard = {
@@ -229,55 +263,116 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
           [
             {
               text: 'View Original',
-              url: imageData.sourceUrl
+              url: mediaData.sourceUrl
             }
           ]
         ]
       };
 
-      // For images that are direct links, we can use sendPhoto
-      const response = await this.bot.sendPhoto(
-        config.channelId,
-        imageData.imageUrl,
-        {
-          reply_markup: inlineKeyboard
-        }
-      );
-      
-      return true;
-    } catch (error) {
-      console.error('Error posting image:', error);
-      
-      // Attempt to download and reupload if direct linking fails
-      try {
-        const imageResponse = await axios({
-          method: 'GET',
-          url: imageData.imageUrl,
-          responseType: 'stream'
-        });
+      // Check if we're dealing with a video
+      if (mediaData.isVideo && mediaData.videoUrl) {
+        console.log(`Posting video: ${mediaData.videoUrl}`);
         
+        // For videos from local cache, we need to use the file path
+        if (fs.existsSync(mediaData.videoUrl)) {
+          const response = await this.bot.sendVideo(
+            config.channelId,
+            mediaData.videoUrl,
+            {
+              caption: mediaData.title,
+              reply_markup: inlineKeyboard
+            }
+          );
+          return true;
+        } else {
+          // Try to post from URL if not in cache
+          try {
+            const response = await this.bot.sendVideo(
+              config.channelId,
+              mediaData.videoUrl,
+              {
+                caption: mediaData.title,
+                reply_markup: inlineKeyboard
+              }
+            );
+            return true;
+          } catch (videoError) {
+            console.error('Error posting video directly:', videoError);
+            
+            // Fallback to sending image/thumbnail if video fails
+            if (mediaData.imageUrl && mediaData.imageUrl !== mediaData.videoUrl) {
+              const response = await this.bot.sendPhoto(
+                config.channelId,
+                mediaData.imageUrl,
+                {
+                  caption: `${mediaData.title} (Video post - see original)`,
+                  reply_markup: inlineKeyboard
+                }
+              );
+              return true;
+            }
+            
+            throw videoError;
+          }
+        }
+      } 
+      
+      // Handle image posting (including video thumbnails as fallback)
+      console.log(`Posting image: ${mediaData.imageUrl}`);
+      
+      // For images from local cache, we need to use the file path
+      if (fs.existsSync(mediaData.imageUrl)) {
         const response = await this.bot.sendPhoto(
           config.channelId,
-          imageResponse.data,
+          mediaData.imageUrl,
           {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: 'View Original',
-                    url: imageData.sourceUrl
-                  }
-                ]
-              ]
-            }
+            caption: mediaData.title,
+            reply_markup: inlineKeyboard
           }
         );
-        
         return true;
-      } catch (secondError) {
-        console.error('Error uploading image after download:', secondError);
-        return false;
+      } else {
+        // Try to post from URL if not in cache
+        try {
+          const response = await this.bot.sendPhoto(
+            config.channelId,
+            mediaData.imageUrl,
+            {
+              caption: mediaData.title,
+              reply_markup: inlineKeyboard
+            }
+          );
+          return true;
+        } catch (imageError) {
+          console.error('Error posting image:', imageError);
+          
+          // Attempt to download and reupload if direct linking fails
+          try {
+            const imageResponse = await axios({
+              method: 'GET',
+              url: mediaData.imageUrl,
+              responseType: 'stream'
+            });
+            
+            const response = await this.bot.sendPhoto(
+              config.channelId,
+              imageResponse.data,
+              {
+                caption: mediaData.title,
+                reply_markup: inlineKeyboard
+              }
+            );
+            
+            return true;
+          } catch (secondError) {
+            console.error('Error uploading image after download:', secondError);
+            return false;
+          }
+        }
       }
+    } catch (error) {
+      console.error('Error posting media:', error);
+      return false;
     }
   }
 
@@ -293,6 +388,11 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       
       // Stop the scheduler if it's running
       queueManager.stopScheduler();
+      
+      // Shut down media cache if needed
+      if (mediaCache.shutdown) {
+        await mediaCache.shutdown();
+      }
       
       return true;
     } catch (error) {

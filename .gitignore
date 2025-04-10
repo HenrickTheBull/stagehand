@@ -4,6 +4,7 @@
 # Queue files
 queue/queue.json
 queue/queue.json.backup
+cache/
 
 # Dependencies
 node_modules/

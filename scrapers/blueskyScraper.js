@@ -68,9 +68,128 @@ class BluskyScraper extends BaseScraper {
   }
 
   /**
+   * Process an image from Bluesky using its CID
+   * @param {string} did - The user's DID
+   * @param {string} cid - The content ID of the image
+   * @returns {Promise<string>} - The local path to the cached image
+   */
+  async processImageByCid(did, cid) {
+    console.log(`Processing image with CID: ${cid}`);
+    
+    // Direct blob URL is most reliable
+    const blobUrl = `${this.serviceEndpoint}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`;
+    
+    // Process and cache the image
+    const processed = await mediaCache.processMediaUrl(blobUrl);
+    return processed.localPath;
+  }
+
+  /**
+   * Process all images from a Bluesky embed
+   * @param {object} images - The images array from the embed
+   * @param {string} did - The user's DID 
+   * @returns {Promise<Array<string>>} - Array of local paths to the cached images
+   */
+  async processAllImages(images, did) {
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      throw new Error('No images found in the content');
+    }
+
+    const imagePaths = [];
+    
+    // Process all images in the array
+    for (const image of images) {
+      if (!image?.image?.ref?.$link) {
+        console.warn('Skipping invalid image reference in post');
+        continue;
+      }
+      
+      const cid = image.image.ref.$link;
+      try {
+        const localPath = await this.processImageByCid(did, cid);
+        imagePaths.push(localPath);
+      } catch (error) {
+        console.error(`Failed to process image with CID ${cid}: ${error.message}`);
+      }
+    }
+
+    if (imagePaths.length === 0) {
+      throw new Error('Failed to process any images from the post');
+    }
+    
+    return imagePaths;
+  }
+
+  /**
+   * Fetch a quoted post by its URI
+   * @param {string} uri - The quoted post URI
+   * @param {string} cid - The quoted post CID
+   * @returns {Promise<object>} - The quoted post data
+   */
+  async fetchQuotedPost(uri, cid) {
+    try {
+      const response = await this.agent.api.app.bsky.feed.getPosts({ uris: [uri] });
+      if (response && response.data && response.data.posts && response.data.posts.length > 0) {
+        return response.data.posts[0];
+      }
+      throw new Error('Quoted post not found in response');
+    } catch (error) {
+      console.error(`Failed to fetch quoted post: ${error.message}`);
+      
+      // Fallback to direct repository lookup if agent API fails
+      try {
+        // Parse URI to get components
+        const uriParts = uri.split('/');
+        if (uriParts.length < 4) throw new Error('Invalid post URI format');
+        
+        const did = uriParts[2];
+        const collection = uriParts[3]; 
+        const rkey = uriParts[4];
+        
+        // Fetch using repo API
+        const recordUrl = new URL(`${this.serviceEndpoint}/xrpc/com.atproto.repo.getRecord`);
+        recordUrl.searchParams.append('repo', did);
+        recordUrl.searchParams.append('collection', collection);
+        recordUrl.searchParams.append('rkey', rkey);
+        
+        const response = await axios.get(recordUrl.toString(), {
+          headers: { 'User-Agent': 'Stagehand/1.1.0' }
+        });
+        
+        return {
+          uri: uri,
+          cid: cid,
+          ...response.data.value
+        };
+      } catch (fallbackError) {
+        console.error(`Fallback fetch also failed: ${fallbackError.message}`);
+        throw new Error(`Could not fetch quoted post: ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * Process images from a recordWithMedia embed (post with quoted content)
+   * @param {object} embed - The recordWithMedia embed object
+   * @param {string} did - The user's DID
+   * @returns {Promise<Array<string>>} - Array of local paths to the cached images
+   */
+  async processRecordWithMedia(embed, did) {
+    const imagePaths = [];
+    
+    // Only process media in the main post, ignore quoted content
+    if (embed.media && embed.media.$type === 'app.bsky.embed.images') {
+      const mediaImages = await this.processAllImages(embed.media.images, did);
+      imagePaths.push(...mediaImages);
+    }
+    
+    return imagePaths;
+  }
+
+  /**
    * Fetch the post content directly from ATProto using the agent
    * @param {string} url - The original URL 
-   * @returns {Promise<{imageUrl: string, videoUrl: string, isVideo: boolean, sourceUrl: string, title: string, siteName: string}>}
+   * @returns {Promise<{imageUrl: string, imageUrls: Array<string>, videoUrl: string, isVideo: boolean, sourceUrl: string, title: string, siteName: string}>}
    */
   async extract(url) {
     try {
@@ -111,41 +230,37 @@ class BluskyScraper extends BaseScraper {
       
       // 6. Process based on embed type
       const embedType = record?.value?.embed?.$type;
-      console.log(`Post has embed type: ${embedType}`);
+      console.log(`Post has embed type: ${embedType || 'none'}`);
       
       // 7. Handle image posts
       if (embedType === 'app.bsky.embed.images') {
-        const images = record?.value?.embed?.images;
-        if (!images || !Array.isArray(images) || images.length === 0) {
-          throw new Error('No images found in the post');
-        }
-        
-        // Get the first image
-        const image = images[0];
-        
-        if (!image?.image?.ref?.$link) {
-          throw new Error('Invalid image reference in post');
-        }
-        
-        const cid = image.image.ref.$link;
-        console.log(`Processing image with CID: ${cid}`);
-        
-        // Direct blob URL is most reliable
-        const blobUrl = `${this.serviceEndpoint}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`;
-        
-        // Process and cache the image
-        const processed = await mediaCache.processMediaUrl(blobUrl);
+        const imagePaths = await this.processAllImages(record.value.embed.images, did);
         
         return {
-          imageUrl: processed.localPath,
+          imageUrl: imagePaths[0], // First image as primary
+          imageUrls: imagePaths, // All images
           sourceUrl: url,
-          title: `Bluesky Image by ${displayName}`,
+          title: `Bluesky Image${imagePaths.length > 1 ? 's' : ''} by ${displayName}`,
           siteName: 'Bluesky',
           isVideo: false
         };
       }
       
-      // 8. Handle video posts
+      // 8. Handle posts with quoted content and media
+      else if (embedType === 'app.bsky.embed.recordWithMedia') {
+        const imagePaths = await this.processRecordWithMedia(record.value.embed, did);
+        
+        return {
+          imageUrl: imagePaths[0], // First image as primary
+          imageUrls: imagePaths, // All images
+          sourceUrl: url,
+          title: `Bluesky Image${imagePaths.length > 1 ? 's' : ''} by ${displayName}`,
+          siteName: 'Bluesky',
+          isVideo: false
+        };
+      }
+      
+      // 9. Handle video posts
       else if (embedType === 'app.bsky.embed.video') {
         const video = record?.value?.embed?.video;
         if (!video || !video.ref || !video.ref.$link) {
@@ -173,6 +288,7 @@ class BluskyScraper extends BaseScraper {
             
             return {
               imageUrl: thumbnailProcessed.localPath, // Thumbnail for preview
+              imageUrls: [thumbnailProcessed.localPath], // Single thumbnail
               videoUrl: videoProcessed.localPath, // Cached and transcoded video
               isVideo: true,
               sourceUrl: url,
@@ -205,6 +321,7 @@ class BluskyScraper extends BaseScraper {
             if (videoProcessed) {
               return {
                 imageUrl: thumbnailProcessed.localPath,
+                imageUrls: [thumbnailProcessed.localPath], // Single thumbnail
                 videoUrl: videoProcessed.localPath,
                 isVideo: true,
                 sourceUrl: url,
@@ -218,6 +335,7 @@ class BluskyScraper extends BaseScraper {
           console.warn('Could not download Bluesky video, using thumbnail only');
           return {
             imageUrl: thumbnailProcessed.localPath,
+            imageUrls: [thumbnailProcessed.localPath], // Single thumbnail
             sourceUrl: url,
             title: `Bluesky Video by ${displayName}`,
             siteName: 'Bluesky',
@@ -229,7 +347,7 @@ class BluskyScraper extends BaseScraper {
         }
       } 
       
-      // 9. Handle unsupported embed types
+      // 10. Handle unsupported embed types
       else {
         throw new Error('Post does not contain any supported media (images or video)');
       }

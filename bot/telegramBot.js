@@ -269,6 +269,47 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
         ]
       };
 
+      // Check if we're dealing with multiple images (imageUrls array with more than one item)
+      if (mediaData.imageUrls && Array.isArray(mediaData.imageUrls) && mediaData.imageUrls.length > 1) {
+        console.log(`Posting multiple images: ${mediaData.imageUrls.length} images`);
+        
+        // Since media groups don't support inline buttons, we'll include the link in the caption
+        const caption = `${mediaData.title}\n\nOriginal: ${mediaData.sourceUrl}`;
+        
+        // Prepare media group format for Telegram
+        const mediaGroup = [];
+        
+        // Process each image in the array
+        for (let i = 0; i < mediaData.imageUrls.length; i++) {
+          const imagePath = mediaData.imageUrls[i];
+          
+          if (fs.existsSync(imagePath)) {
+            // Add as InputMediaPhoto for the media group - use correct format
+            mediaGroup.push({
+              type: 'photo',
+              media: fs.createReadStream(imagePath),
+              // Only add caption to the first image
+              ...(i === 0 ? { caption } : {})
+            });
+          } else {
+            console.warn(`Image file not found: ${imagePath}`);
+          }
+        }
+        
+        if (mediaGroup.length > 0) {
+          try {
+            console.log(`Sending media group with ${mediaGroup.length} images`);
+            // Send as a media group (album)
+            await this.bot.sendMediaGroup(config.channelId, mediaGroup);
+            return true;
+          } catch (mediaGroupError) {
+            console.error('Error posting media group:', mediaGroupError);
+            // If posting as a group fails, fall back to posting the first image
+            console.log('Falling back to posting single image');
+          }
+        }
+      }
+
       // Check if we're dealing with a video
       if (mediaData.isVideo && mediaData.videoUrl) {
         console.log(`Posting video: ${mediaData.videoUrl}`);

@@ -31,7 +31,7 @@ class StagehandBot {
       const helpText = `
 Stagehand Bot Commands:
 /queue - Show current queue status
-/test - Post the next image in the queue
+/send - Post the next image in the queue
 /schedule [cron] - Set posting schedule (cron syntax)
 /setcount [number] - Set number of images per scheduled post (default: 1)
 /clear - Clear the queue
@@ -67,8 +67,8 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       this.bot.sendMessage(chatId, response);
     });
 
-    // Command to test post the next image
-    this.bot.onText(/\/test/, async (msg) => {
+    // Command to post the next image
+    this.bot.onText(/\/send/, async (msg) => {
       const chatId = msg.chat.id;
       
       if (!this.isAuthorized(msg.from.id)) {
@@ -269,12 +269,20 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
         ]
       };
 
+      // Special caption for FurAffinity posts
+      let caption = '';
+      if (mediaData.siteName === 'FurAffinity' && mediaData.title && mediaData.name) {
+        caption = `🖼️: ${mediaData.title}\n🎨: ${mediaData.name}`;
+      }
+
       // Check if we're dealing with multiple images (imageUrls array with more than one item)
       if (mediaData.imageUrls && Array.isArray(mediaData.imageUrls) && mediaData.imageUrls.length > 1) {
         console.log(`Posting multiple images: ${mediaData.imageUrls.length} images`);
         
         // Since media groups don't support inline buttons, we'll include the link in the caption
-        const caption = `${mediaData.title}\n\nOriginal: ${mediaData.sourceUrl}`;
+        const groupCaption = caption ? 
+          `${caption}\n\nOriginal: ${mediaData.sourceUrl}` : 
+          `${mediaData.title}\n\nOriginal: ${mediaData.sourceUrl}`;
         
         // Prepare media group format for Telegram
         const mediaGroup = [];
@@ -289,7 +297,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
               type: 'photo',
               media: fs.createReadStream(imagePath),
               // Only add caption to the first image
-              ...(i === 0 ? { caption } : {})
+              ...(i === 0 ? { caption: groupCaption } : {})
             });
           } else {
             console.warn(`Image file not found: ${imagePath}`);
@@ -320,7 +328,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
             config.channelId,
             mediaData.videoUrl,
             {
-              // Removed the caption
+              caption: caption, // Add the caption here
               reply_markup: inlineKeyboard
             }
           );
@@ -332,7 +340,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
               config.channelId,
               mediaData.videoUrl,
               {
-                // Removed the caption
+                caption: caption, // Add the caption here
                 reply_markup: inlineKeyboard
               }
             );
@@ -342,12 +350,15 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
             
             // Fallback to sending image/thumbnail if video fails
             if (mediaData.imageUrl && mediaData.imageUrl !== mediaData.videoUrl) {
+              const fallbackCaption = caption ? 
+                `${caption}\n(Video post - see original)` : 
+                "(Video post - see original)";
+              
               const response = await this.bot.sendPhoto(
                 config.channelId,
                 mediaData.imageUrl,
                 {
-                  // Removed the caption, only indicating this is a video post
-                  caption: "(Video post - see original)",
+                  caption: fallbackCaption,
                   reply_markup: inlineKeyboard
                 }
               );
@@ -368,7 +379,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
           config.channelId,
           mediaData.imageUrl,
           {
-            // Removed the caption
+            caption: caption, // Add the caption here
             reply_markup: inlineKeyboard
           }
         );
@@ -380,7 +391,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
             config.channelId,
             mediaData.imageUrl,
             {
-              // Removed the caption
+              caption: caption, // Add the caption here
               reply_markup: inlineKeyboard
             }
           );
@@ -400,7 +411,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
               config.channelId,
               imageResponse.data,
               {
-                // Removed the caption
+                caption: caption, // Add the caption here
                 reply_markup: inlineKeyboard
               }
             );

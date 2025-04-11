@@ -3,6 +3,8 @@ const { BskyAgent } = require('@atproto/api');
 const BaseScraper = require('./baseScraper');
 const mediaCache = require('../utils/mediaCache');
 const config = require('../config');
+const path = require('path'); 
+const crypto = require('crypto-js'); // Add crypto-js for hashing
 
 class BluskyScraper extends BaseScraper {
   constructor() {
@@ -79,9 +81,60 @@ class BluskyScraper extends BaseScraper {
     // Direct blob URL is most reliable
     const blobUrl = `${this.serviceEndpoint}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`;
     
-    // Process and cache the image
-    const processed = await mediaCache.processMediaUrl(blobUrl);
-    return processed.localPath;
+    try {
+      // Download the blob directly to avoid filename issues
+      const response = await axios({
+        method: 'GET',
+        url: blobUrl,
+        responseType: 'arraybuffer',
+        headers: {
+          'User-Agent': 'Stagehand/1.1.0'
+        }
+      });
+      
+      // Get the content type to determine file extension
+      const contentType = response.headers['content-type'];
+      let fileExt = '.jpg'; // Default extension
+      
+      if (contentType) {
+        if (contentType.includes('png')) {
+          fileExt = '.png';
+        } else if (contentType.includes('gif')) {
+          fileExt = '.gif';
+        } else if (contentType.includes('webp')) {
+          fileExt = '.webp';
+        }
+      }
+      
+      // Convert binary data to base64 for hashing
+      const base64Data = Buffer.from(response.data).toString('base64');
+      
+      // Generate MD5 hash of the image data
+      const hash = crypto.MD5(base64Data).toString();
+      
+      // Create filename from the hash
+      const filename = `${hash}${fileExt}`;
+      const filePath = path.join(mediaCache.imageDir, filename);
+      
+      console.log(`Saving image as ${filename}`);
+      
+      // Save the image to disk
+      await require('fs-extra').writeFile(filePath, response.data);
+      
+      return filePath;
+    } catch (error) {
+      console.error(`Error downloading blob for CID ${cid}: ${error.message}`);
+      
+      // Fall back to mediaCache if direct download fails
+      // Process and cache the image using mediaCache method
+      try {
+        const processed = await mediaCache.processMediaUrl(`https://cdn.bsky.app/img/feed/plain/${did}/${cid}@jpeg`);
+        return processed.localPath;
+      } catch (fallbackError) {
+        console.error(`Fallback download also failed for CID ${cid}: ${fallbackError.message}`);
+        throw fallbackError;
+      }
+    }
   }
 
   /**

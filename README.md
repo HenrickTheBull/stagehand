@@ -13,11 +13,73 @@ A Telegram bot that takes links from supported websites, extracts images, and qu
 
 ## Supported Websites
 
-- e621 (Using basic OpenGraph Scraping)
-- FurAffinity
-- SoFurry
-- Weasyl
-- Bluesky (Uses ATProto API Library)
+- **e621** - Uses OpenGraph scraping and Cheerio DOM parsing to extract images and videos
+- **FurAffinity** - Leverages the FA Export API to fetch submission data and direct download links
+- **Bluesky** - Uses ATProto API Library with BskyAgent for full support of posts, images, and videos
+- **SoFurry** - *Planning stage*
+- **Weasyl** - *Planning stage*
+
+## Methodology for Supported Sites
+
+### Bluesky
+- Uses the official `@atproto/api` library with BskyAgent
+- Parses URLs in the format `bsky.app/profile/{handle}/post/{id}`
+- Extracts user DIDs and content identifiers
+- Supports both image and video content extraction
+- Handles thumbnails for video posts
+- Works with public posts without requiring authentication
+- Processes quoted content and multiple images in a single post
+
+### e621
+- Uses Cheerio to parse the HTML DOM of e621 pages
+- Extracts media URLs from OpenGraph tags and direct DOM elements
+- Handles both image and video content
+- Processes and caches media files locally
+- Supports fallback methods if primary extraction fails
+- Ensures proper URL resolution for relative paths
+
+### FurAffinity
+- Extracts submission IDs from URLs in the format `furaffinity.net/view/{id}`
+- Uses the ([FAExport](https://github.com/Deer-Spangle/faexport)) ([API](https://faexport.spangle.org.uk/)) to fetch submission data
+- Extracts direct download URLs, titles, and artist information
+- Handles both image and video content
+- Preserves proper attribution and metadata
+
+## Media Caching and Transcoding
+
+Stagehand uses a sophisticated media caching and transcoding system to efficiently handle images and videos from various sources:
+
+### Media Caching
+
+- All downloaded media is cached locally to reduce bandwidth usage and improve performance
+- Files are stored in organized directories:
+  - `cache/images/` - For static images
+  - `cache/videos/` - For original video files
+  - `cache/transcoded/` - For processed/transcoded videos
+- Filenames are generated using MD5 hashes of source URLs to ensure uniqueness
+- Cache is automatically cleaned up, with files older than 15 days (configurable) being removed
+
+### Media Processing
+
+- Content type detection based on HTTP headers and URL patterns
+- Intelligent fallback mechanisms if metadata is unavailable
+- Special handling for different media sources (e.g., Bluesky API)
+- File extension determination from both URL and content type
+- Maximum download size limit of 50MB to prevent abuse
+
+### Video Transcoding
+
+- Videos are automatically transcoded to H.264 MP4 format for maximum compatibility with Telegram
+- Uses FFmpeg (via fluent-ffmpeg) with optimized settings:
+  - H.264 video codec for wide compatibility
+  - AAC audio codec at 128kbps
+  - Medium preset balancing quality and processing speed
+  - CRF 23 for good quality-to-size ratio
+  - MP4 container with faststart flag for immediate playback
+  - YUV420p pixel format for maximum device compatibility
+- Animated GIFs are handled appropriately based on content type
+
+This system ensures that all media is properly optimized before being sent to Telegram, providing reliable playback across all devices while managing bandwidth and storage efficiently.
 
 ## Installation
 
@@ -95,7 +157,7 @@ npm run dev
 - `/start` - Start the bot
 - `/help` - Show help information
 - `/queue` - Show current queue status
-- `/test` - Post the next image in the queue immediately
+- `/send` - Post the next image in the queue immediately
 - `/schedule [cron]` - Set posting schedule using cron syntax
 - `/setcount [number]` - Set number of images to post per interval
 - `/clear` - Clear the entire queue
@@ -103,19 +165,6 @@ npm run dev
 ### Adding Images to Queue
 
 Send a link from any supported website to the bot in a direct message. The bot will extract the image and add it to the queue.
-
-## Bluesky Implementation
-
-Stagehand includes full support for Bluesky posts using ATProtocol. The implementation:
-
-- Uses the `@atproto/api` library with BskyAgent
-- Parses Bluesky URLs in the format `bsky.app/profile/{handle}/post/{id}`
-- Extracts user DIDs and content identifiers
-- Supports both image and video content extraction
-- Handles thumbnails for video posts
-- Works with public posts without requiring authentication
-
-All Bluesky content is fetched through the official ATProtocol APIs respecting rate limits.
 
 ## Adding New Website Scrapers
 
@@ -133,6 +182,7 @@ ISC
 
 - [x] ATProto Implementation
 - [x] Basic e621 Scraper
-- [ ] FurAffinity Scraper
+- [x] FurAffinity Scraper
 - [ ] SoFurry Scraper
 - [ ] Weasyl Scraper
+- [ ] Interactive Graphical Queue Manager

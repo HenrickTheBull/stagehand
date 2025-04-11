@@ -14,6 +14,7 @@ class StagehandBot {
 
   init() {
     this.registerCommands();
+    this.registerCallbacks();
     this.startScheduler();
     console.log('Stagehand bot started...');
   }
@@ -30,7 +31,7 @@ class StagehandBot {
       const chatId = msg.chat.id;
       const helpText = `
 Stagehand Bot Commands:
-/queue - Show current queue status
+/queue - Show current queue status with interactive management
 /send - Post the next image in the queue
 /schedule [cron] - Set posting schedule (cron syntax)
 /setcount [number] - Set number of images per scheduled post (default: 1)
@@ -43,8 +44,8 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       this.bot.sendMessage(chatId, helpText);
     });
 
-    // Command to show queue status
-    this.bot.onText(/\/queue/, async (msg) => {
+    // Command to show queue status with visual management
+    this.bot.onText(/\/queue(?:\s+(\d+))?/, async (msg, match) => {
       const chatId = msg.chat.id;
       
       if (!this.isAuthorized(msg.from.id)) {
@@ -52,19 +53,11 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
         return;
       }
       
-      const queueLength = await queueManager.getQueueLength();
-      const queue = await queueManager.getQueue();
-      let response = `Current queue has ${queueLength} items.`;
+      // Get page number from the command (defaults to 1)
+      const page = parseInt(match[1]) || 1;
+      const pageSize = 5;
       
-      if (queueLength > 0) {
-        response += '\n\nNext 5 items:';
-        for (let i = 0; i < Math.min(5, queueLength); i++) {
-          const itemType = queue[i].isVideo ? '🎬 Video' : '🖼️ Image';
-          response += `\n${i + 1}. ${itemType}: ${queue[i].title} (${queue[i].siteName})`;
-        }
-      }
-      
-      this.bot.sendMessage(chatId, response);
+      await this.displayQueuePage(chatId, page, pageSize);
     });
 
     // Command to post the next image
@@ -228,6 +221,232 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
             { reply_to_message_id: msg.message_id }
           );
         }
+      }
+    });
+  }
+
+  /**
+   * Register callback query handlers for interactive buttons
+   */
+  registerCallbacks() {
+    this.bot.on('callback_query', async (query) => {
+      try {
+        const chatId = query.message.chat.id;
+        if (!this.isAuthorized(query.from.id)) {
+          await this.bot.answerCallbackQuery(query.id, { text: 'You are not authorized to use these controls.' });
+          return;
+        }
+
+        const data = query.data.split('_');
+        const action = data[0];
+        
+        switch (action) {
+          case 'page': {
+            // Handle page navigation
+            const page = parseInt(data[1]);
+            await this.bot.deleteMessage(chatId, query.message.message_id);
+            await this.displayQueuePage(chatId, page, 5);
+            await this.bot.answerCallbackQuery(query.id, { text: `Showing page ${page}` });
+            break;
+          }
+          
+          case 'remove': {
+            // Handle item removal
+            const index = parseInt(data[1]);
+            const removed = await queueManager.removeFromQueue(index);
+            if (removed) {
+              const itemType = removed.isVideo ? 'Video' : 'Image';
+              await this.bot.answerCallbackQuery(query.id, { text: `Removed ${itemType}: ${removed.title}` });
+              
+              // Update the queue display
+              await this.bot.deleteMessage(chatId, query.message.message_id);
+              const page = parseInt(data[2]) || 1;
+              await this.displayQueuePage(chatId, page, 5);
+            } else {
+              await this.bot.answerCallbackQuery(query.id, { text: 'Failed to remove item' });
+            }
+            break;
+          }
+          
+          case 'top': {
+            // Handle move to top (next to post)
+            const index = parseInt(data[1]);
+            const queue = await queueManager.getQueue();
+            
+            if (index > 0 && index < queue.length) {
+              // Remove the item from its current position
+              const item = queue[index];
+              queueManager.queueData.queue.splice(index, 1);
+              
+              // Add it to the beginning
+              queueManager.queueData.queue.unshift(item);
+              
+              // Save changes
+              await queueManager.saveQueueToDisk();
+              
+              await this.bot.answerCallbackQuery(query.id, { text: `Moved "${item.title}" to top of queue` });
+              
+              // Update the queue display
+              await this.bot.deleteMessage(chatId, query.message.message_id);
+              const page = parseInt(data[2]) || 1;
+              await this.displayQueuePage(chatId, page, 5);
+            } else {
+              await this.bot.answerCallbackQuery(query.id, { text: 'Failed to move item' });
+            }
+            break;
+          }
+          
+          case 'preview': {
+            // Handle preview item (send a preview of the queued item)
+            const index = parseInt(data[1]);
+            const queue = await queueManager.getQueue();
+            
+            if (index >= 0 && index < queue.length) {
+              const item = queue[index];
+              await this.bot.answerCallbackQuery(query.id, { text: 'Sending preview...' });
+              
+              // Send a temporary message
+              const loadingMsg = await this.bot.sendMessage(chatId, 'Preparing preview...');
+              
+              try {
+                // Generate a preview for the item
+                if (item.imageUrl && fs.existsSync(item.imageUrl)) {
+                  // Send the image as a preview
+                  const caption = `Preview of: ${item.title}\nFrom: ${item.siteName}\nPosition in queue: ${index + 1}`;
+                  await this.bot.sendPhoto(chatId, item.imageUrl, { caption });
+                } else if (item.imageUrls && Array.isArray(item.imageUrls) && item.imageUrls.length > 0) {
+                  // Use the first image from multiple images
+                  const firstImage = item.imageUrls[0];
+                  if (fs.existsSync(firstImage)) {
+                    const caption = `Preview of: ${item.title}\nFrom: ${item.siteName}\nPosition in queue: ${index + 1}\n(${item.imageUrls.length} images total)`;
+                    await this.bot.sendPhoto(chatId, firstImage, { caption });
+                  }
+                }
+              } catch (error) {
+                console.error('Error sending preview:', error);
+              } finally {
+                // Delete the loading message
+                await this.bot.deleteMessage(chatId, loadingMsg.message_id);
+              }
+            } else {
+              await this.bot.answerCallbackQuery(query.id, { text: 'Item not found' });
+            }
+            break;
+          }
+        }
+      } catch (error) {
+        console.error('Error handling callback query:', error);
+        await this.bot.answerCallbackQuery(query.id, { text: 'An error occurred' });
+      }
+    });
+  }
+
+  /**
+   * Display a page of the queue with interactive buttons
+   * @param {number} chatId - Telegram chat ID
+   * @param {number} page - Page number to display (1-based)
+   * @param {number} pageSize - Number of items per page
+   */
+  async displayQueuePage(chatId, page, pageSize) {
+    const queue = await queueManager.getQueue();
+    const queueLength = queue.length;
+    
+    if (queueLength === 0) {
+      this.bot.sendMessage(chatId, 'Queue is empty.');
+      return;
+    }
+    
+    // Calculate total pages
+    const totalPages = Math.ceil(queueLength / pageSize);
+    
+    // Ensure page is within bounds
+    const currentPage = Math.max(1, Math.min(page, totalPages));
+    
+    // Calculate start and end indices for this page
+    const startIdx = (currentPage - 1) * pageSize;
+    const endIdx = Math.min(startIdx + pageSize, queueLength);
+    
+    // Build message with queue items
+    let message = `📋 *Queue Management* (${queueLength} items total)\n`;
+    message += `Showing items ${startIdx + 1}-${endIdx} of ${queueLength}\n\n`;
+    
+    // Add each queue item
+    for (let i = startIdx; i < endIdx; i++) {
+      const item = queue[i];
+      const itemType = item.isVideo ? '🎬' : '🖼️';
+      const itemIndex = i + 1;
+      message += `${itemIndex}. ${itemType} *${item.title}*\n   From: ${item.siteName}\n`;
+    }
+    
+    // Create navigation buttons and item action buttons
+    const inline_keyboard = [];
+    
+    // Item action buttons
+    for (let i = startIdx; i < endIdx; i++) {
+      const row = [];
+      
+      // Add "Preview" button
+      row.push({
+        text: `👁️ #${i+1}`,
+        callback_data: `preview_${i}_${currentPage}`
+      });
+      
+      // Add "Remove" button
+      row.push({
+        text: `❌ #${i+1}`,
+        callback_data: `remove_${i}_${currentPage}`
+      });
+      
+      // Only add "Move to top" if not already at top
+      if (i > 0) {
+        row.push({
+          text: `⬆️ #${i+1}`,
+          callback_data: `top_${i}_${currentPage}`
+        });
+      } else {
+        row.push({
+          text: `🔼 Next`,
+          callback_data: `preview_0_${currentPage}`
+        });
+      }
+      
+      inline_keyboard.push(row);
+    }
+    
+    // Navigation row for paging
+    const navRow = [];
+    
+    // Previous page button
+    if (currentPage > 1) {
+      navRow.push({
+        text: '◀️ Previous',
+        callback_data: `page_${currentPage - 1}`
+      });
+    }
+    
+    // Page indicator
+    navRow.push({
+      text: `Page ${currentPage}/${totalPages}`,
+      callback_data: `page_${currentPage}`
+    });
+    
+    // Next page button
+    if (currentPage < totalPages) {
+      navRow.push({
+        text: 'Next ▶️',
+        callback_data: `page_${currentPage + 1}`
+      });
+    }
+    
+    if (navRow.length > 0) {
+      inline_keyboard.push(navRow);
+    }
+    
+    // Send the message with inline keyboard
+    await this.bot.sendMessage(chatId, message, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard
       }
     });
   }

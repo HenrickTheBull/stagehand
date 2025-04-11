@@ -10,6 +10,7 @@ A Telegram bot that takes links from supported websites, extracts images, and qu
 - Access control to limit who can use the bot
 - Post images with source attribution and link back to original
 - Modular design for easy addition of new website scrapers
+- Interactive visual queue management with inline buttons
 
 ## Supported Websites
 
@@ -156,15 +157,32 @@ npm run dev
 
 - `/start` - Start the bot
 - `/help` - Show help information
-- `/queue` - Show current queue status
+- `/queue` - Show current queue status with interactive management
 - `/send` - Post the next image in the queue immediately
 - `/schedule [cron]` - Set posting schedule using cron syntax
-- `/setcount [number]` - Set number of images to post per interval
+- `/setcount [number]` - Set number of images per post interval
 - `/clear` - Clear the entire queue
+- `/cleancache` - Clean expired items from media cache
 
 ### Adding Images to Queue
 
 Send a link from any supported website to the bot in a direct message. The bot will extract the image and add it to the queue.
+
+### Interactive Queue Management
+
+The `/queue` command displays an interactive visual interface for managing queued items:
+
+- **Page Navigation**: Browse through the queue using Previous/Next buttons
+- **Item Preview**: View a preview of any queued item before it's posted
+- **Item Removal**: Remove specific items from the queue with a single click
+- **Reordering**: Move any item to the top of the queue to be posted next
+- **Pagination**: Easily navigate through pages of queued items
+
+The interface shows important information about each queued item including:
+- Item position in queue
+- Content type (image or video)
+- Title and source website
+- Controls for managing each item
 
 ## Adding New Website Scrapers
 
@@ -185,4 +203,4 @@ ISC
 - [x] FurAffinity Scraper
 - [ ] SoFurry Scraper
 - [ ] Weasyl Scraper
-- [ ] Interactive Graphical Queue Manager
+- [x] Interactive Graphical Queue Manager

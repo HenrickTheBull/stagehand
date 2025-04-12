@@ -1,5 +1,4 @@
 const axios = require('axios');
-const cheerio = require('cheerio');
 const BaseScraper = require('./baseScraper');
 const config = require('../config');
 
@@ -10,56 +9,61 @@ class SoFurryScraper extends BaseScraper {
   }
 
   async extract(url) {
-    // Temporarily disabled - return message that it's coming soon
-    return {
-      error: "That's coming soon.",
-      sourceUrl: url,
-      siteName: 'SoFurry'
-    };
-    
-    // Original implementation commented out
-    /*
     try {
-      // Use a common user agent to avoid being blocked
-      const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      };
+      // Extract submission ID from URL
+      const submissionId = this.extractSubmissionId(url);
+      if (!submissionId) {
+        throw new Error('Could not extract submission ID from SoFurry URL');
+      }
 
-      const response = await axios.get(url, { headers });
-      const $ = cheerio.load(response.data);
+      // Call SoFurry API to get submission details
+      const apiUrl = `https://api2.sofurry.com/std/getSubmissionDetails?id=${submissionId}&format=json`;
+      const response = await axios.get(apiUrl);
       
-      // Try to get OpenGraph data first
-      let imageUrl = $('meta[property="og:image"]').attr('content');
-      let title = $('meta[property="og:title"]').attr('content');
-      
-      // If not available, try other selectors
-      if (!imageUrl) {
-        imageUrl = $('#sfArtImage').attr('src') || $('#contentImageDiv img').attr('src');
+      if (!response.data) {
+        throw new Error('Failed to get data from SoFurry API');
       }
+
+      // Get the content URL (full-sized image)
+      const imageUrl = response.data.contentSourceUrl;
       
-      if (!imageUrl) {
-        throw new Error('Could not find image on SoFurry page');
-      }
+      // Check if this is a video
+      const isVideo = this.isVideoUrl(imageUrl);
       
-      // Get title if not found from og:title
-      if (!title) {
-        title = $('.sf-title').text().trim() || $('title').text().trim() || 'SoFurry Post';
-      }
-      
-      // Get the artist
-      const artist = $('.sf-username a').text().trim() || '';
-      
-      return {
-        imageUrl: imageUrl.startsWith('http') ? imageUrl : `https://www.sofurry.com${imageUrl}`,
+      // Format the submission title with author
+      const title = response.data.title ? 
+        `${response.data.title} by ${response.data.author}` : 
+        `SoFurry submission by ${response.data.author}`;
+
+      // Return the data in the format expected by baseScraper
+      const result = {
         sourceUrl: url,
-        title: artist ? `${title} by ${artist}` : title,
+        title: title,
         siteName: 'SoFurry'
       };
+
+      // Add either imageUrl or videoUrl depending on content type
+      if (isVideo) {
+        result.videoUrl = imageUrl;
+        result.isVideo = true;
+      } else {
+        result.imageUrl = imageUrl;
+      }
+
+      return result;
     } catch (error) {
       console.error('Error extracting data from SoFurry:', error);
       throw new Error(`Failed to extract data from SoFurry: ${error.message}`);
     }
-    */
+  }
+
+  extractSubmissionId(url) {
+    // Extract submission ID from various SoFurry URL formats
+    // Example: https://www.sofurry.com/view/1234567 or https://sofurry.com/art/1234567
+    const idMatches = url.match(/(?:view|art|submission)\/(\d+)/i);
+    
+    // If we found a match, return the first capture group (the ID)
+    return idMatches ? idMatches[1] : null;
   }
 }
 

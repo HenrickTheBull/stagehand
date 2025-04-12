@@ -46,9 +46,9 @@ module.exports = {
       pattern: /^https:\/\/(?:www\.)?sofurry\.com\//
     },
     {
-      name: 'Weasly',
-      domain: 'weasly.com',
-      pattern: /^https:\/\/(?:www\.)?weasly\.com\//
+      name: 'Weasyl',
+      domain: 'weasyl.com',
+      pattern: /^https:\/\/(?:www\.)?weasyl\.com\//
     }
   ]
 };

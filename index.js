@@ -2,6 +2,7 @@ require('dotenv').config();
 const StagehandBot = require('./bot/telegramBot');
 const queueManager = require('./queue/queueManager');
 const mediaCache = require('./utils/mediaCache');
+const updater = require('./utils/updater');
 
 // Check if required environment variables are set
 if (!process.env.BOT_TOKEN) {
@@ -26,6 +27,9 @@ try {
   console.log('Stagehand bot started successfully');
   console.log(`Posting to channel: ${process.env.CHANNEL_ID}`);
   
+  // Start the auto-updater
+  updater.start();
+  
   // Handle termination signals for graceful shutdown
   const shutdown = async (signal) => {
     console.log(`\nReceived ${signal}, shutting down gracefully...`);
@@ -40,6 +44,10 @@ try {
         await mediaCache.shutdown();
         console.log('Media cache shutdown complete');
       }
+      
+      // Stop the auto-updater
+      updater.stop();
+      console.log('Auto-updater stopped');
       
       // Additional bot cleanup if needed
       if (bot.shutdown) {

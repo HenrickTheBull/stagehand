@@ -1,59 +1,98 @@
 const axios = require('axios');
-const cheerio = require('cheerio');
 const BaseScraper = require('./baseScraper');
 const config = require('../config');
 
 class WeasylScraper extends BaseScraper {
+  constructor() {
+    super();
+    this.apiKey = process.env.WEASYL_API_KEY;
+  }
+
   canHandle(url) {
     // This is for the site you called "Weasly", but I'm assuming it's "Weasyl"
     // Update config.js if needed to match the correct domain
-    const weasylPattern = config.supportedSites.find(site => site.name === 'Weasly').pattern;
+    const weasylPattern = config.supportedSites.find(site => site.name === 'Weasyl' || site.name === 'Weasly').pattern;
     return weasylPattern.test(url);
   }
 
   async extract(url) {
-    // Temporarily disabled - return message that it's coming soon
-    return {
-      error: "That's coming soon.",
-      sourceUrl: url,
-      siteName: 'Weasyl'
-    };
-    
-    // Original implementation commented out
-    /*
     try {
-      // Use a common user agent to avoid being blocked
-      const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      };
-
-      const response = await axios.get(url, { headers });
-      const $ = cheerio.load(response.data);
-      
-      // Try to get the main image
-      const imageUrl = $('.content-submission-image').attr('src') || $('img.image').attr('src');
-      
-      if (!imageUrl) {
-        throw new Error('Could not find image on Weasyl page');
+      // Check if API key is available
+      if (!this.apiKey) {
+        throw new Error('Weasyl API key not found in environment variables. Please set WEASYL_API_KEY in your .env file.');
       }
       
-      // Get the title
-      const title = $('.info h2').text().trim() || $('title').text().trim() || 'Weasyl Post';
+      // Extract the submission ID from the URL
+      const submissionId = this.extractSubmissionId(url);
+      if (!submissionId) {
+        throw new Error('Could not extract submission ID from Weasyl URL');
+      }
+
+      // Call the Weasyl API to get submission details
+      const apiUrl = `https://www.weasyl.com/api/submissions/${submissionId}/view`;
+      const response = await axios.get(apiUrl, {
+        headers: {
+          'X-Weasyl-API-Key': this.apiKey
+        }
+      });
+
+      if (!response.data) {
+        throw new Error('Failed to get data from Weasyl API');
+      }
+
+      // Get the submission URL from the API response
+      const submissionData = response.data;
+      const mediaEntries = submissionData.media?.submission;
       
-      // Get the artist
-      const artist = $('.username').text().trim() || '';
+      if (!mediaEntries || mediaEntries.length === 0) {
+        throw new Error('No submission media found in Weasyl API response');
+      }
+
+      const imageUrl = mediaEntries[0].url;
       
-      return {
-        imageUrl: imageUrl.startsWith('http') ? imageUrl : `https://www.weasyl.com${imageUrl}`,
+      // Check if this is a video
+      const isVideo = this.isVideoUrl(imageUrl);
+      
+      // Format the title with artist
+      const title = submissionData.title ? 
+        `${submissionData.title} by ${submissionData.owner}` : 
+        `Weasyl submission by ${submissionData.owner}`;
+
+      // Return the data in the format expected by baseScraper
+      const result = {
         sourceUrl: url,
-        title: artist ? `${title} by ${artist}` : title,
+        title: title,
         siteName: 'Weasyl'
       };
+
+      // Add either imageUrl or videoUrl depending on content type
+      if (isVideo) {
+        result.videoUrl = imageUrl;
+        result.isVideo = true;
+      } else {
+        result.imageUrl = imageUrl;
+      }
+
+      return result;
     } catch (error) {
       console.error('Error extracting data from Weasyl:', error);
       throw new Error(`Failed to extract data from Weasyl: ${error.message}`);
     }
-    */
+  }
+
+  extractSubmissionId(url) {
+    // Extract submission ID from various Weasyl URL formats
+    
+    // Format 1: https://www.weasyl.com/submission/2482447/mid-tf-fun
+    let idMatches = url.match(/submission\/(\d+)/i);
+    
+    // Format 2: https://www.weasyl.com/~username/submissions/2482447/mid-tf-fun
+    if (!idMatches) {
+      idMatches = url.match(/submissions\/(\d+)/i);
+    }
+    
+    // If we found a match, return the first capture group (the ID)
+    return idMatches ? idMatches[1] : null;
   }
 }
 

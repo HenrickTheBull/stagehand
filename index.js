@@ -1,5 +1,6 @@
 require('dotenv').config();
 const StagehandBot = require('./bot/telegramBot');
+const DiscordWebhook = require('./bot/discordWebhook');
 const queueManager = require('./queue/queueManager');
 const mediaCache = require('./utils/mediaCache');
 const updater = require('./utils/updater');
@@ -15,17 +16,32 @@ if (!process.env.CHANNEL_ID) {
   process.exit(1);
 }
 
-let bot;
+let telegramBot;
+let discordWebhook;
 
-// Initialize the bot
+// Initialize the bots and services
 try {
   // Initialize media cache first
   console.log('Initializing media cache...');
   
-  // Initialize the bot
-  bot = new StagehandBot();
-  console.log('Stagehand bot started successfully');
-  console.log(`Posting to channel: ${process.env.CHANNEL_ID}`);
+  // Initialize the Telegram bot
+  telegramBot = new StagehandBot();
+  console.log('Stagehand Telegram bot started successfully');
+  console.log(`Posting to Telegram channel: ${process.env.CHANNEL_ID}`);
+  
+  // Initialize Discord webhook if enabled
+  discordWebhook = DiscordWebhook;
+  if (discordWebhook.isEnabled()) {
+    console.log('Discord webhook integration enabled');
+  }
+  
+  // Start the scheduler with both posting services
+  const postFunctions = {
+    telegram: telegramBot.postMedia.bind(telegramBot),
+    discord: discordWebhook.postMedia.bind(discordWebhook)
+  };
+  queueManager.startScheduler(postFunctions);
+  console.log('Post scheduler started');
   
   // Start the auto-updater
   updater.start();
@@ -49,9 +65,14 @@ try {
       updater.stop();
       console.log('Auto-updater stopped');
       
-      // Additional bot cleanup if needed
-      if (bot.shutdown) {
-        await bot.shutdown();
+      // Telegram bot cleanup
+      if (telegramBot && telegramBot.shutdown) {
+        await telegramBot.shutdown();
+      }
+      
+      // Discord webhook cleanup
+      if (discordWebhook && discordWebhook.shutdown) {
+        await discordWebhook.shutdown();
       }
       
       console.log('Shutdown complete');
@@ -76,6 +97,14 @@ try {
         await mediaCache.shutdown();
         console.log('Media cache shutdown after uncaught exception');
       }
+      
+      if (telegramBot && telegramBot.shutdown) {
+        await telegramBot.shutdown();
+      }
+      
+      if (discordWebhook && discordWebhook.shutdown) {
+        await discordWebhook.shutdown();
+      }
     } catch (err) {
       console.error('Failed to shut down properly after exception:', err);
     }
@@ -83,6 +112,6 @@ try {
   });
   
 } catch (error) {
-  console.error('Error starting bot:', error);
+  console.error('Error starting services:', error);
   process.exit(1);
 }

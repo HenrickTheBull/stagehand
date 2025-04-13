@@ -1,5 +1,6 @@
 const axios = require('axios');
 const BaseScraper = require('./baseScraper');
+const mediaCache = require('../utils/mediaCache');
 const config = require('../config');
 
 class WeasylScraper extends BaseScraper {
@@ -48,32 +49,42 @@ class WeasylScraper extends BaseScraper {
         throw new Error('No submission media found in Weasyl API response');
       }
 
-      const imageUrl = mediaEntries[0].url;
+      const sourceImageUrl = mediaEntries[0].url;
       
       // Check if this is a video
-      const isVideo = this.isVideoUrl(imageUrl);
+      const isVideo = this.isVideoUrl(sourceImageUrl);
       
       // Format the title with artist
       const title = submissionData.title ? 
         `${submissionData.title} by ${submissionData.owner}` : 
         `Weasyl submission by ${submissionData.owner}`;
 
+      // Process and cache the media
+      const processed = await mediaCache.processMediaUrl(sourceImageUrl, isVideo);
+      
       // Return the data in the format expected by baseScraper
-      const result = {
-        sourceUrl: url,
-        title: title,
-        siteName: 'Weasyl'
-      };
-
-      // Add either imageUrl or videoUrl depending on content type
       if (isVideo) {
-        result.videoUrl = imageUrl;
-        result.isVideo = true;
+        return {
+          imageUrl: processed.localPath,
+          videoUrl: processed.localPath,
+          isVideo: true,
+          sourceUrl: url,
+          title: title,
+          siteName: 'Weasyl',
+          originalVideoUrl: sourceImageUrl,
+          sourceImgUrl: sourceImageUrl // Add the sourceImgUrl field
+        };
       } else {
-        result.imageUrl = imageUrl;
+        return {
+          imageUrl: processed.localPath,
+          isVideo: false,
+          sourceUrl: url,
+          title: title,
+          siteName: 'Weasyl',
+          originalImageUrl: sourceImageUrl,
+          sourceImgUrl: sourceImageUrl // Add the sourceImgUrl field
+        };
       }
-
-      return result;
     } catch (error) {
       console.error('Error extracting data from Weasyl:', error);
       throw new Error(`Failed to extract data from Weasyl: ${error.message}`);

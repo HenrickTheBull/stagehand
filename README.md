@@ -204,3 +204,8 @@ ISC
 - [ ] SoFurry Scraper
 - [ ] Weasyl Scraper
 - [x] Interactive Graphical Queue Manager
+- [ ] Add perceptual hashing
+- [ ] Redo Queue Manager
+- [ ] Redo Bluesky Module
+- [ ] Redo Telegram Module
+- [ ] Redo Discord Module

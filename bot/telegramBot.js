@@ -5,18 +5,19 @@ const config = require('../config');
 const queueManager = require('../queue/queueManager');
 const scraperManager = require('../utils/scraperManager');
 const mediaCache = require('../utils/mediaCache');
+const discordWebhook = require('./discordWebhook');
 
 class StagehandBot {
   constructor() {
     this.bot = new TelegramBot(config.botToken, { polling: true });
+    this.serviceName = 'telegram';
     this.init();
   }
 
   init() {
     this.registerCommands();
     this.registerCallbacks();
-    this.startScheduler();
-    console.log('Stagehand bot started...');
+    console.log('Telegram bot started...');
   }
 
   registerCommands() {
@@ -76,11 +77,68 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
         return;
       }
       
-      await this.postMedia(nextItem);
-      await queueManager.removeFromQueue();
+      // Status tracking variables
+      let telegramSuccess = false;
+      let discordSuccess = false;
+      let telegramStatus = 'not attempted';
+      let discordStatus = 'not attempted';
       
+      // Post to Telegram if it hasn't been posted yet
+      if (!queueManager.hasBeenPostedByService(0, 'telegram')) {
+        telegramStatus = 'attempting';
+        const telegramResult = await this.postMedia(nextItem);
+        
+        if (telegramResult) {
+          await queueManager.markPostedByService(0, 'telegram');
+          telegramSuccess = true;
+          telegramStatus = 'posted';
+        } else {
+          telegramStatus = 'failed';
+        }
+      } else {
+        telegramStatus = 'already posted';
+        telegramSuccess = true;
+      }
+      
+      // Post to Discord if it's configured and hasn't been posted yet
+      if (discordWebhook.isEnabled() && !queueManager.hasBeenPostedByService(0, 'discord')) {
+        discordStatus = 'attempting';
+        try {
+          const discordResult = await discordWebhook.postMedia(nextItem);
+          
+          if (discordResult) {
+            await queueManager.markPostedByService(0, 'discord');
+            discordSuccess = true;
+            discordStatus = 'posted';
+          } else {
+            discordStatus = 'failed';
+          }
+        } catch (error) {
+          console.error('Error posting to Discord:', error);
+          discordStatus = 'error: ' + error.message;
+        }
+      } else if (discordWebhook.isEnabled()) {
+        discordStatus = 'already posted';
+        discordSuccess = true;
+      } else {
+        discordStatus = 'disabled';
+      }
+      
+      // Construct detailed response message
       const itemType = nextItem.isVideo ? 'Video' : 'Image';
-      this.bot.sendMessage(chatId, `${itemType} posted to channel.`);
+      let responseMessage = `${itemType}: "${nextItem.title}"\n\n`;
+      responseMessage += `Telegram: ${telegramStatus}\n`;
+      
+      if (discordWebhook.isEnabled()) {
+        responseMessage += `Discord: ${discordStatus}\n`;
+      }
+      
+      // If at least one service was successful, consider it a partial success
+      if (telegramSuccess || discordSuccess) {
+        this.bot.sendMessage(chatId, responseMessage);
+      } else {
+        this.bot.sendMessage(chatId, `Failed to post ${itemType} to any service.\n${responseMessage}`);
+      }
     });
 
     // Command to clean cache
@@ -121,7 +179,6 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       const success = queueManager.setCronSchedule(cronExpression);
       
       if (success) {
-        this.restartScheduler();
         this.bot.sendMessage(chatId, `Schedule updated to: ${cronExpression}`);
       } else {
         this.bot.sendMessage(chatId, 'Invalid cron expression. Please use valid cron syntax.');
@@ -375,7 +432,20 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       const item = queue[i];
       const itemType = item.isVideo ? '🎬' : '🖼️';
       const itemIndex = i + 1;
-      message += `${itemIndex}. ${itemType} *${item.title}*\n   From: ${item.siteName}\n`;
+      
+      // Show posting status for each service
+      let statusIcons = '';
+      if (item.postedTo) {
+        if (item.postedTo.telegram) statusIcons += '✓TG ';
+        else statusIcons += '❌TG ';
+        
+        if (queueManager.postServices.includes('discord')) {
+          if (item.postedTo.discord) statusIcons += '✓DS';
+          else statusIcons += '❌DS';
+        }
+      }
+      
+      message += `${itemIndex}. ${itemType} *${item.title}*\n   From: ${item.siteName} ${statusIcons}\n`;
     }
     
     // Create navigation buttons and item action buttons
@@ -458,15 +528,6 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
     }
     
     return config.authorizedUsers.includes(userId.toString());
-  }
-
-  startScheduler() {
-    queueManager.startScheduler(this.postMedia.bind(this));
-  }
-
-  restartScheduler() {
-    queueManager.stopScheduler();
-    this.startScheduler();
   }
 
   /**
@@ -657,14 +718,6 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       console.log('Stopping Telegram bot polling...');
       await this.bot.stopPolling();
       console.log('Telegram bot polling stopped');
-      
-      // Stop the scheduler if it's running
-      queueManager.stopScheduler();
-      
-      // Shut down media cache if needed
-      if (mediaCache.shutdown) {
-        await mediaCache.shutdown();
-      }
       
       return true;
     } catch (error) {

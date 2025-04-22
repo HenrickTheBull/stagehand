@@ -1,5 +1,6 @@
 const axios = require('axios');
 const BaseScraper = require('./baseScraper');
+const mediaCache = require('../utils/mediaCache');
 const config = require('../config');
 
 class FurAffinityScraper extends BaseScraper {
@@ -34,20 +35,39 @@ class FurAffinityScraper extends BaseScraper {
         throw new Error('Could not find download URL in the API response');
       }
       
-      const imageUrl = data.download;
+      const sourceImageUrl = data.download;
       const title = data.title || 'FurAffinity Post';
       const artist = data.name || '';
-      const isVideo = this.isVideoUrl(imageUrl);
+      const isVideo = this.isVideoUrl(sourceImageUrl);
       
-      return {
-        imageUrl: isVideo ? undefined : imageUrl,
-        videoUrl: isVideo ? imageUrl : undefined,
-        isVideo: isVideo,
-        sourceUrl: url,
-        title: artist ? `${title}` : title,
-        name: artist, // Add the name field explicitly
-        siteName: 'FurAffinity'
-      };
+      // Process and cache the media locally
+      let mediaData;
+      if (isVideo) {
+        mediaData = await mediaCache.processMediaUrl(sourceImageUrl, true);
+        return {
+          imageUrl: mediaData.localPath, 
+          videoUrl: mediaData.localPath,
+          isVideo: true,
+          sourceUrl: url,
+          title: artist ? `${title}` : title,
+          name: artist, // Add the name field explicitly
+          siteName: 'FurAffinity',
+          downloadUrl: sourceImageUrl, // Original source URL for download
+          sourceImgUrl: sourceImageUrl // Add the new sourceImgUrl field
+        };
+      } else {
+        mediaData = await mediaCache.processMediaUrl(sourceImageUrl);
+        return {
+          imageUrl: mediaData.localPath,
+          isVideo: false,
+          sourceUrl: url,
+          title: artist ? `${title}` : title,
+          name: artist, // Add the name field explicitly
+          siteName: 'FurAffinity',
+          downloadUrl: sourceImageUrl, // Original source URL for download
+          sourceImgUrl: sourceImageUrl // Add the new sourceImgUrl field
+        };
+      }
     } catch (error) {
       console.error('Error extracting data from FurAffinity:', error);
       throw new Error(`Failed to extract data from FurAffinity: ${error.message}`);

@@ -60,18 +60,23 @@ class E621Scraper extends BaseScraper {
         }
       }
       
+      // Store the original source URL before processing
+      const sourceImageUrl = mediaUrl;
+      
       // Process and cache the media
       const processed = await mediaCache.processMediaUrl(mediaUrl, isVideo);
       
       // Return appropriate data structure based on media type with generic title
       if (processed.isVideo) {
         return {
-          imageUrl: processed.localPath, // For video, this will be the transcoded video
+          imageUrl: processed.localPath,
           videoUrl: processed.localPath,
           isVideo: true,
           sourceUrl: ogUrl || url,
           title: "e621 Video", // Generic title without post-specific text
-          siteName: 'e621'
+          siteName: 'e621',
+          originalVideoUrl: sourceImageUrl,
+          sourceImgUrl: sourceImageUrl // Add the sourceImgUrl field
         };
       } else {
         return {
@@ -79,7 +84,9 @@ class E621Scraper extends BaseScraper {
           sourceUrl: ogUrl || url,
           title: "e621 Image", // Generic title without post-specific text
           siteName: 'e621',
-          isVideo: false
+          isVideo: false,
+          originalImageUrl: sourceImageUrl,
+          sourceImgUrl: sourceImageUrl // Add the sourceImgUrl field
         };
       }
     } catch (error) {

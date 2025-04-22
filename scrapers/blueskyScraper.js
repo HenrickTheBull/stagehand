@@ -289,19 +289,17 @@ class BluskyScraper extends BaseScraper {
       if (embedType === 'app.bsky.embed.images') {
         const imagePaths = await this.processAllImages(record.value.embed.images, did);
         
-        return {
-          imageUrl: imagePaths[0], // First image as primary
-          imageUrls: imagePaths, // All images
-          sourceUrl: url,
-          title: `Bluesky Image${imagePaths.length > 1 ? 's' : ''} by ${displayName}`,
-          siteName: 'Bluesky',
-          isVideo: false
-        };
-      }
-      
-      // 8. Handle posts with quoted content and media
-      else if (embedType === 'app.bsky.embed.recordWithMedia') {
-        const imagePaths = await this.processRecordWithMedia(record.value.embed, did);
+        // Get source image URLs for each image
+        const sourceImageUrls = [];
+        if (record.value.embed.images && Array.isArray(record.value.embed.images)) {
+          for (const image of record.value.embed.images) {
+            if (image?.image?.ref?.$link) {
+              const cid = image.image.ref.$link;
+              const sourceUrl = `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}@jpeg`;
+              sourceImageUrls.push(sourceUrl);
+            }
+          }
+        }
         
         return {
           imageUrl: imagePaths[0], // First image as primary
@@ -309,7 +307,43 @@ class BluskyScraper extends BaseScraper {
           sourceUrl: url,
           title: `Bluesky Image${imagePaths.length > 1 ? 's' : ''} by ${displayName}`,
           siteName: 'Bluesky',
-          isVideo: false
+          isVideo: false,
+          originalImageUrl: sourceImageUrls[0], // First original URL
+          originalImageUrls: sourceImageUrls, // All original URLs
+          sourceImgUrl: sourceImageUrls[0] // Add the new sourceImgUrl field
+        };
+      }
+      
+      // 8. Handle posts with quoted content and media
+      else if (embedType === 'app.bsky.embed.recordWithMedia') {
+        const imagePaths = await this.processRecordWithMedia(record.value.embed, did);
+        
+        // Get source image URLs from recordWithMedia
+        const sourceImageUrls = [];
+        if (record.value.embed.media && 
+            record.value.embed.media.$type === 'app.bsky.embed.images' && 
+            record.value.embed.media.images && 
+            Array.isArray(record.value.embed.media.images)) {
+          
+          for (const image of record.value.embed.media.images) {
+            if (image?.image?.ref?.$link) {
+              const cid = image.image.ref.$link;
+              const sourceUrl = `https://cdn.bsky.app/img/feed/plain/${did}/${cid}@jpeg`;
+              sourceImageUrls.push(sourceUrl);
+            }
+          }
+        }
+        
+        return {
+          imageUrl: imagePaths[0], // First image as primary
+          imageUrls: imagePaths, // All images
+          sourceUrl: url,
+          title: `Bluesky Image${imagePaths.length > 1 ? 's' : ''} by ${displayName}`,
+          siteName: 'Bluesky',
+          isVideo: false,
+          originalImageUrl: sourceImageUrls[0], // First original URL
+          originalImageUrls: sourceImageUrls, // All original URLs
+          sourceImgUrl: sourceImageUrls[0] // Add the new sourceImgUrl field
         };
       }
       
@@ -334,10 +368,12 @@ class BluskyScraper extends BaseScraper {
           // Direct blob access is most reliable for video
           const videoBlobUrl = `${this.serviceEndpoint}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`;
           let videoProcessed = null;
+          let sourceVideoUrl = `https://video.bsky.app/watch/${did}/${cid}/video.mp4`;
           
           try {
             console.log(`Downloading video from blob URL: ${videoBlobUrl}`);
             videoProcessed = await mediaCache.processMediaUrl(videoBlobUrl, true);
+            sourceVideoUrl = videoBlobUrl;
             
             return {
               imageUrl: thumbnailProcessed.localPath, // Thumbnail for preview
@@ -346,7 +382,11 @@ class BluskyScraper extends BaseScraper {
               isVideo: true,
               sourceUrl: url,
               title: `Bluesky Video by ${displayName}`,
-              siteName: 'Bluesky'
+              siteName: 'Bluesky',
+              originalImageUrl: thumbUrl,
+              originalVideoUrl: sourceVideoUrl,
+              sourceImgUrl: thumbUrl, // Use thumbnail URL as sourceImgUrl for videos
+              sourceVideoUrl: sourceVideoUrl // Additional field for video source
             };
           } catch (blobError) {
             console.error(`Failed to download video from blob URL: ${blobError.message}`);
@@ -365,6 +405,7 @@ class BluskyScraper extends BaseScraper {
                 console.log(`Trying alternative video URL: ${videoUrl}`);
                 videoProcessed = await mediaCache.processMediaUrl(videoUrl, true);
                 console.log(`Successfully downloaded video from: ${videoUrl}`);
+                sourceVideoUrl = videoUrl;
                 break;
               } catch (e) {
                 console.log(`Failed with URL ${videoUrl}: ${e.message}`);
@@ -379,7 +420,11 @@ class BluskyScraper extends BaseScraper {
                 isVideo: true,
                 sourceUrl: url,
                 title: `Bluesky Video by ${displayName}`,
-                siteName: 'Bluesky'
+                siteName: 'Bluesky',
+                originalImageUrl: thumbUrl,
+                originalVideoUrl: sourceVideoUrl,
+                sourceImgUrl: thumbUrl, // Use thumbnail URL as sourceImgUrl for videos
+                sourceVideoUrl: sourceVideoUrl // Additional field for video source
               };
             }
           }
@@ -392,7 +437,9 @@ class BluskyScraper extends BaseScraper {
             sourceUrl: url,
             title: `Bluesky Video by ${displayName}`,
             siteName: 'Bluesky',
-            isVideo: false
+            isVideo: false,
+            originalImageUrl: thumbUrl,
+            sourceImgUrl: thumbUrl // Add the new sourceImgUrl field
           };
         } catch (error) {
           console.error('Error processing Bluesky video:', error);

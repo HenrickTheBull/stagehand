@@ -13,6 +13,13 @@ class QueueManager {
     this.scheduledTask = null;
     this.autoSaveInterval = null;
     this.queueData = { queue: [] };
+    this.postServices = ['telegram'];
+    
+    // Add Discord to services if enabled
+    if (config.discord?.enabled) {
+      this.postServices.push('discord');
+    }
+    
     this.initialize();
   }
 
@@ -23,6 +30,47 @@ class QueueManager {
     // Log queue status on startup
     const queueLength = this.queueData.queue.length;
     console.log(`Queue loaded with ${queueLength} item${queueLength !== 1 ? 's' : ''}`);
+    
+    // Initialize service tracking for any existing items that don't have it
+    this.initializeServiceTracking();
+  }
+
+  /**
+   * Initialize service tracking for items that don't have it yet
+   */
+  initializeServiceTracking() {
+    let updated = false;
+    
+    for (let i = 0; i < this.queueData.queue.length; i++) {
+      const item = this.queueData.queue[i];
+      
+      // If the item doesn't have a postedTo property, initialize it
+      if (!item.postedTo) {
+        this.queueData.queue[i].postedTo = {};
+        this.postServices.forEach(service => {
+          this.queueData.queue[i].postedTo[service] = false;
+        });
+        updated = true;
+      }
+      
+      // Initialize sourceImgUrl if not present
+      if (!item.sourceImgUrl) {
+        // Try to set sourceImgUrl from existing data
+        if (item.originalImageUrl) {
+          this.queueData.queue[i].sourceImgUrl = item.originalImageUrl;
+          updated = true;
+        } else if (item.downloadUrl) {
+          this.queueData.queue[i].sourceImgUrl = item.downloadUrl;
+          updated = true;
+        }
+      }
+    }
+    
+    if (updated) {
+      this.saveQueueToDisk()
+        .then(() => console.log('Queue items updated with service tracking and sourceImgUrl'))
+        .catch(err => console.error('Error initializing service tracking:', err));
+    }
   }
 
   /**
@@ -107,10 +155,33 @@ class QueueManager {
 
   async addToQueue(imageData) {
     try {
+      // Initialize postedTo tracking for all services
+      const postedTo = {};
+      this.postServices.forEach(service => {
+        postedTo[service] = false;
+      });
+      
+      // Determine the sourceImgUrl from available data
+      let sourceImgUrl = null;
+      
+      // Check various possible sources for the raw upstream URL
+      if (imageData.originalImageUrl && imageData.originalImageUrl.startsWith('http')) {
+        sourceImgUrl = imageData.originalImageUrl;
+      } else if (imageData.downloadUrl && imageData.downloadUrl.startsWith('http')) {
+        sourceImgUrl = imageData.downloadUrl;
+      } else if (imageData.imageUrl && imageData.imageUrl.startsWith('http')) {
+        // Only use imageUrl if it's a web URL, not a local path
+        sourceImgUrl = imageData.imageUrl;
+      }
+      
+      console.log(`Adding item to queue with sourceImgUrl: ${sourceImgUrl || 'none'}`);
+      
       this.queueData.queue.push({
         ...imageData,
         timestamp: new Date().toISOString(),
-        id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+        id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        postedTo,
+        sourceImgUrl // Add the new field
       });
       
       await this.saveQueueToDisk();
@@ -128,6 +199,85 @@ class QueueManager {
     return this.queueData.queue[0];
   }
 
+  /**
+   * Mark an item as posted by a specific service
+   * @param {number} index - Index of the item in the queue
+   * @param {string} service - Service name (e.g., 'telegram', 'discord')
+   * @returns {Promise<boolean>} - Whether marking was successful
+   */
+  async markPostedByService(index = 0, service) {
+    try {
+      if (this.queueData.queue.length === 0 || index >= this.queueData.queue.length) {
+        return false;
+      }
+      
+      // Make sure the service is valid
+      if (!this.postServices.includes(service)) {
+        console.warn(`Unknown service: ${service}`);
+        return false;
+      }
+      
+      // Mark the item as posted by the service
+      if (!this.queueData.queue[index].postedTo) {
+        this.queueData.queue[index].postedTo = {};
+      }
+      
+      this.queueData.queue[index].postedTo[service] = true;
+      
+      // Check if all services have posted the item
+      const allPosted = this.postServices.every(s => 
+        this.queueData.queue[index].postedTo[s] === true
+      );
+      
+      // If all services have posted, remove the item
+      if (allPosted) {
+        const removed = this.queueData.queue.splice(index, 1)[0];
+        console.log(`All services posted item: ${removed.title}, removed from queue`);
+      }
+      
+      await this.saveQueueToDisk();
+      return true;
+    } catch (error) {
+      console.error('Error marking item as posted:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if an item has been posted by a specific service
+   * @param {number} index - Index of the item in the queue
+   * @param {string} service - Service name
+   * @returns {boolean} - Whether the item has been posted by the service
+   */
+  hasBeenPostedByService(index = 0, service) {
+    if (this.queueData.queue.length === 0 || index >= this.queueData.queue.length) {
+      return false;
+    }
+    
+    const item = this.queueData.queue[index];
+    return item.postedTo && item.postedTo[service] === true;
+  }
+
+  /**
+   * Get the next item that has not been posted by a specific service
+   * @param {string} service - Service name
+   * @returns {Object|null} - Next item to post or null if none found
+   */
+  async getNextForService(service) {
+    for (let i = 0; i < this.queueData.queue.length; i++) {
+      const item = this.queueData.queue[i];
+      if (item.postedTo && item.postedTo[service] === false) {
+        return { item, index: i };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Force remove an item from queue regardless of posting status
+   * @param {number} index - Index of the item to remove
+   * @returns {Promise<Object|null>} - The removed item or null if not found
+   */
   async removeFromQueue(index = 0) {
     try {
       if (this.queueData.queue.length === 0 || index >= this.queueData.queue.length) {
@@ -173,7 +323,12 @@ class QueueManager {
     return true;
   }
 
-  startScheduler(postFunction) {
+  /**
+   * Start scheduler with multi-service support
+   * @param {Object} postFunctions - Object mapping service names to post functions
+   * @returns {boolean} - Whether scheduler was started successfully
+   */
+  startScheduler(postFunctions) {
     if (this.scheduledTask) {
       this.scheduledTask.stop();
     }
@@ -181,20 +336,47 @@ class QueueManager {
     try {
       this.scheduledTask = cron.schedule(this.cronSchedule, async () => {
         console.log('Running scheduled post task...');
+        
         for (let i = 0; i < this.imagesPerInterval; i++) {
+          // Get next item that needs processing by any service
           const nextImage = await this.getNextFromQueue();
-          if (nextImage) {
-            const success = await postFunction(nextImage);
-            if (success) {
-              await this.removeFromQueue();
-              console.log(`Posted image: ${nextImage.title || 'Untitled'}`);
-            } else {
-              console.error(`Failed to post image: ${nextImage.title || 'Untitled'}`);
-              break; // Stop trying if posting fails
-            }
-          } else {
+          if (!nextImage) {
             console.log('Queue is empty, nothing to post');
             break;
+          }
+          
+          // Process for each service
+          let atLeastOneServicePosted = false;
+          
+          for (const service of this.postServices) {
+            // Skip if this service already posted this item
+            if (this.hasBeenPostedByService(0, service)) {
+              console.log(`Item "${nextImage.title}" already posted by ${service}, skipping`);
+              continue;
+            }
+            
+            // Get post function for this service
+            const postFunction = postFunctions[service];
+            if (!postFunction) {
+              console.warn(`No post function for service: ${service}`);
+              continue;
+            }
+            
+            // Post the item with this service
+            const success = await postFunction(nextImage);
+            
+            if (success) {
+              await this.markPostedByService(0, service);
+              console.log(`Posted to ${service}: ${nextImage.title || 'Untitled'}`);
+              atLeastOneServicePosted = true;
+            } else {
+              console.error(`Failed to post to ${service}: ${nextImage.title || 'Untitled'}`);
+            }
+          }
+          
+          if (!atLeastOneServicePosted) {
+            console.error(`Failed to post item: ${nextImage.title || 'Untitled'} to any service`);
+            break; // Stop trying if posting fails for all services
           }
         }
       });

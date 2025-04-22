@@ -6,6 +6,12 @@ module.exports = {
   botToken: process.env.BOT_TOKEN,
   channelId: process.env.CHANNEL_ID,
   
+  // Discord configuration
+  discord: {
+    webhookUrl: process.env.DISCORD_WEBHOOK_URL,
+    enabled: process.env.DISCORD_ENABLED === 'true'
+  },
+  
   // Access control - can be expanded with more user IDs
   authorizedUsers: process.env.AUTHORIZED_USERS ? process.env.AUTHORIZED_USERS.split(',') : [],
   

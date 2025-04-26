@@ -538,11 +538,18 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
   async postMedia(mediaData) {
     try {
       // Create inline keyboard with link to source
+      let buttonText = `View on ${mediaData.siteName}`;
+      
+      // Special butterfly emojis for Bluesky
+      if (mediaData.siteName === 'Bluesky') {
+        buttonText = `🦋 ${buttonText} 🦋`;
+      }
+      
       const inlineKeyboard = {
         inline_keyboard: [
           [
             {
-              text: 'View Original',
+              text: buttonText,
               url: mediaData.sourceUrl
             }
           ]

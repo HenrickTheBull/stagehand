@@ -37,6 +37,11 @@ module.exports = {
       pattern: /^https:\/\/(?:www\.)?bsky\.app\//
     },
     {
+      name: 'Bluesky',
+      domain: 'deer.social',
+      pattern: /^https:\/\/(?:www\.)?deer\.social\//
+    },
+    {
       name: 'e621',
       domain: 'e621.net',
       pattern: /^https:\/\/(?:www\.)?e621\.net\//

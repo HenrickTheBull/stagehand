@@ -11,16 +11,21 @@ class BluskyScraper extends BaseScraper {
     super();
     // Initialize with service endpoint only - no authentication needed for public posts
     this.serviceEndpoint = config.bluesky.service || 'https://bsky.social';
-    // Fix the regex pattern syntax
-    this.matcher = new RegExp('(?:https?://)?bsky\\.app/profile/(?<repo>\\S+)/post/(?<rkey>\\S+)');
+    // Update regex to support both bsky.app and deer.social
+    this.matcher = new RegExp('(?:https?://)?(?:bsky\\.app|deer\\.social)/profile/(?<repo>\\S+)/post/(?<rkey>\\S+)');
     
     // Initialize the agent
     this.agent = new BskyAgent({ service: this.serviceEndpoint });
   }
 
   canHandle(url) {
-    const blueskyPattern = config.supportedSites.find(site => site.name === 'Bluesky').pattern;
-    return blueskyPattern.test(url);
+    // Check all Bluesky-related patterns from config
+    const blueskyPatterns = config.supportedSites
+      .filter(site => site.name === 'Bluesky')
+      .map(site => site.pattern);
+    
+    // Return true if any pattern matches
+    return blueskyPatterns.some(pattern => pattern.test(url));
   }
 
   /**

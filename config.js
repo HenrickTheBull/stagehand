@@ -14,6 +14,7 @@ module.exports = {
   
   // Access control - can be expanded with more user IDs
   authorizedUsers: process.env.AUTHORIZED_USERS ? process.env.AUTHORIZED_USERS.split(',') : [],
+  ownerId: process.env.OWNER_ID,
   
   // Queue configuration
   defaultCronSchedule: process.env.DEFAULT_CRON_SCHEDULE || '0 */1 * * *', // Default: every hour
@@ -40,6 +41,11 @@ module.exports = {
       name: 'Bluesky',
       domain: 'deer.social',
       pattern: /^https:\/\/(?:www\.)?deer\.social\//
+    },
+    {
+      name: 'Bluesky',
+      domain: 'sky.thebull.app',
+      pattern: /^https:\/\/(?:www\.)?sky\.thebull\.app\//
     },
     {
       name: 'e621',

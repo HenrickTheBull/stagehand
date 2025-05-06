@@ -1,6 +1,9 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const fs = require('fs');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 const config = require('../config');
 const queueManager = require('../queue/queueManager');
 const scraperManager = require('../utils/scraperManager');
@@ -38,6 +41,7 @@ Stagehand Bot Commands:
 /setcount [number] - Set number of images per scheduled post (default: 1)
 /clear - Clear the queue
 /cleancache - Clean expired items from media cache
+/update - Update bot from GitHub repository (owner only)
 
 Send any link to a supported site to add it to the queue.
 Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
@@ -232,6 +236,56 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       }
       
       this.bot.sendMessage(chatId, `Queue cleared (${queueLength} items removed).`);
+    });
+
+    // Command to manually trigger an update from GitHub
+    this.bot.onText(/\/update/, async (msg) => {
+      const chatId = msg.chat.id;
+      
+      // Only the bot owner can run updates
+      if (!this.isOwner(msg.from.id)) {
+        this.bot.sendMessage(chatId, 'Only the bot owner can trigger updates.');
+        return;
+      }
+      
+      this.bot.sendMessage(chatId, 'Checking for updates...');
+      
+      try {
+        const updater = require('../utils/updater');
+        const isUpdateAvailable = await updater.isUpdateAvailable();
+        
+        if (!isUpdateAvailable) {
+          this.bot.sendMessage(chatId, 'No updates available. Bot is already running the latest version.');
+          return;
+        }
+        
+        const statusMessage = await this.bot.sendMessage(chatId, 'Updates found! Downloading and applying updates...');
+        
+        const updateResult = await updater.manualUpdate();
+        
+        if (updateResult) {
+          await this.bot.editMessageText('Update successful! Bot will restart to apply changes.', {
+            chat_id: chatId,
+            message_id: statusMessage.message_id
+          });
+          
+          // Give a moment for the message to be delivered before restarting
+          setTimeout(async () => {
+            try {
+              // Restart the bot using PM2
+              await execAsync('pm2 restart --update-env stagehand');
+            } catch (restartError) {
+              console.error('Error restarting bot:', restartError);
+              this.bot.sendMessage(chatId, `Error during restart: ${restartError.message}`);
+            }
+          }, 2000);
+        } else {
+          this.bot.sendMessage(chatId, 'Update process completed, but no changes were applied.');
+        }
+      } catch (error) {
+        console.error('Error during manual update:', error);
+        this.bot.sendMessage(chatId, `Error during update: ${error.message}`);
+      }
     });
 
     // Handle URL links
@@ -436,11 +490,11 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       // Show posting status for each service
       let statusIcons = '';
       if (item.postedTo) {
-        if (item.postedTo.telegram) statusIcons += '✓TG ';
+        if (item.postedTo.telegram) statusIcons += '✅TG ';
         else statusIcons += '❌TG ';
         
         if (queueManager.postServices.includes('discord')) {
-          if (item.postedTo.discord) statusIcons += '✓DS';
+          if (item.postedTo.discord) statusIcons += '✅DS';
           else statusIcons += '❌DS';
         }
       }
@@ -528,6 +582,15 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
     }
     
     return config.authorizedUsers.includes(userId.toString());
+  }
+
+  /**
+   * Check if the user is the owner of the bot
+   * @param {number} userId - The Telegram user ID to check
+   * @returns {boolean} - Whether the user is the owner
+   */
+  isOwner(userId) {
+    return config.ownerId && userId.toString() === config.ownerId.toString();
   }
 
   /**

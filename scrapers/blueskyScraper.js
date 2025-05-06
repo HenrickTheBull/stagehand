@@ -11,8 +11,8 @@ class BluskyScraper extends BaseScraper {
     super();
     // Initialize with service endpoint only - no authentication needed for public posts
     this.serviceEndpoint = config.bluesky.service || 'https://bsky.social';
-    // Update regex to support both bsky.app and deer.social
-    this.matcher = new RegExp('(?:https?://)?(?:bsky\\.app|deer\\.social)/profile/(?<repo>\\S+)/post/(?<rkey>\\S+)');
+    // Update regex to support bsky.app, deer.social, and sky.thebull.app
+    this.matcher = new RegExp('(?:https?://)?(?:bsky\\.app|deer\\.social|sky\\.thebull\\.app)/profile/(?<repo>\\S+)/post/(?<rkey>\\S+)');
     
     // Initialize the agent
     this.agent = new BskyAgent({ service: this.serviceEndpoint });

@@ -17,8 +17,8 @@ A Telegram bot that takes links from supported websites, extracts images, and qu
 - **e621** - Uses OpenGraph scraping and Cheerio DOM parsing to extract images and videos
 - **FurAffinity** - Leverages the FA Export API to fetch submission data and direct download links
 - **Bluesky** - Uses ATProto API Library with BskyAgent for full support of posts, images, and videos
-- **SoFurry** - *Planning stage*
-- **Weasyl** - *Planning stage*
+- **SoFurry** - Utilizes SoFurry's own APIs to fetch and download submissions.
+- **Weasyl** - Implements Weasyl's API, you'll need to supply your own API key from [Weasyl](https://www.weasyl.com/)
 
 ## Methodology for Supported Sites
 

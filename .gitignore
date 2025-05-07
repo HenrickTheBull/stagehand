@@ -1,5 +1,6 @@
 # Environment variables
 .env
+announcements.json
 
 # Queue files
 queue/queue.json

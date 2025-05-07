@@ -8,16 +8,20 @@ const config = require('../config');
 const queueManager = require('../queue/queueManager');
 const scraperManager = require('../utils/scraperManager');
 const mediaCache = require('../utils/mediaCache');
+const AnnouncementManager = require('../utils/announcementManager');
 const discordWebhook = require('./discordWebhook');
 
 class StagehandBot {
   constructor() {
     this.bot = new TelegramBot(config.botToken, { polling: true });
     this.serviceName = 'telegram';
+    this.channelId = config.channelId;
+    this.announcements = new AnnouncementManager(this);
     this.init();
   }
 
-  init() {
+  async init() {
+    await this.announcements.init();
     this.registerCommands();
     this.registerCallbacks();
     console.log('Telegram bot started...');
@@ -37,7 +41,7 @@ class StagehandBot {
 Stagehand Bot Commands:
 /queue - Show current queue status with interactive management
 /send - Post the next image in the queue
-/schedule [cron] - Set posting schedule (cron syntax)
+/schedule [cron] - Set posting schedule (cron syntax, use https://crontab.guru/ for help)
 /setcount [number] - Set number of images per scheduled post (default: 1)
 /clear - Clear the queue
 /cleancache - Clean expired items from media cache
@@ -288,10 +292,240 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       }
     });
 
+    // Command to add a text announcement
+    this.bot.onText(/\/announce(?:\s+(.+))?/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      
+      if (!this.isAuthorized(msg.from.id)) {
+        this.bot.sendMessage(chatId, 'You are not authorized to use this command.');
+        return;
+      }
+      
+      // Check if there's text after the command
+      const text = match && match[1] ? match[1].trim() : '';
+      
+      if (!text) {
+        // No parameters - show usage help
+        this.bot.sendMessage(
+          chatId, 
+          'Usage: /announce [message text]\n\nThis will initiate the announcement creation process. After sending the message text, you\'ll be prompted to set a name, schedule, and an optional button link for the announcement.'
+        );
+        return;
+      }
+      
+      // Store the message text in session and ask for a name
+      this.pendingAnnouncements = this.pendingAnnouncements || {};
+      this.pendingAnnouncements[msg.from.id] = { message: text };
+      
+      this.bot.sendMessage(
+        chatId,
+        'Please enter a name for this announcement (or type "skip" for auto-generated name):',
+        { reply_markup: { force_reply: true } }
+      ).then(namePrompt => {
+        // Set up a one-time listener for the name response
+        this.bot.onReplyToMessage(chatId, namePrompt.message_id, async (nameMsg) => {
+          const announcementName = nameMsg.text === 'skip' ? '' : nameMsg.text;
+          this.pendingAnnouncements[msg.from.id].name = announcementName;
+          
+          // Now ask for a schedule
+          this.bot.sendMessage(
+            chatId,
+            'Please enter a cron schedule for when this announcement should run (use https://crontab.guru/ for help):',
+            { reply_markup: { force_reply: true } }
+          ).then(schedulePrompt => {
+            // Set up a one-time listener for the schedule response
+            this.bot.onReplyToMessage(chatId, schedulePrompt.message_id, async (scheduleMsg) => {
+              const cronSchedule = scheduleMsg.text;
+              
+              // Ask if they want to add a button
+              this.bot.sendMessage(
+                chatId,
+                'Would you like to add a button with a link to this announcement?',
+                {
+                  reply_markup: {
+                    inline_keyboard: [
+                      [
+                        { text: 'Yes', callback_data: 'add_button' },
+                        { text: 'No', callback_data: 'skip_button' }
+                      ]
+                    ]
+                  }
+                }
+              ).then(buttonPrompt => {
+                // Callback handler for yes/no button selection
+                this.bot.once('callback_query', async (query) => {
+                  await this.bot.answerCallbackQuery(query.id);
+                  
+                  // Delete the yes/no prompt
+                  await this.bot.deleteMessage(chatId, buttonPrompt.message_id);
+                  
+                  if (query.data === 'add_button') {
+                    // User wants to add a button
+                    this.bot.sendMessage(
+                      chatId,
+                      'Please enter the button text:',
+                      { reply_markup: { force_reply: true } }
+                    ).then(buttonTextPrompt => {
+                      this.bot.onReplyToMessage(chatId, buttonTextPrompt.message_id, async (buttonTextMsg) => {
+                        const buttonText = buttonTextMsg.text;
+                        
+                        // Now ask for the button URL
+                        this.bot.sendMessage(
+                          chatId,
+                          'Please enter the button URL:',
+                          { reply_markup: { force_reply: true } }
+                        ).then(buttonUrlPrompt => {
+                          this.bot.onReplyToMessage(chatId, buttonUrlPrompt.message_id, async (buttonUrlMsg) => {
+                            const buttonUrl = buttonUrlMsg.text;
+                            
+                            // Create the button object
+                            const button = {
+                              text: buttonText,
+                              url: buttonUrl
+                            };
+                            
+                            try {
+                              const announcement = await this.announcements.addAnnouncement(
+                                this.pendingAnnouncements[msg.from.id].message,
+                                cronSchedule,
+                                this.pendingAnnouncements[msg.from.id].name,
+                                button
+                              );
+                              
+                              delete this.pendingAnnouncements[msg.from.id];
+                              
+                              this.bot.sendMessage(
+                                chatId,
+                                `✅ Announcement "${announcement.name}" created!\n\n`+
+                                `Scheduled for: ${announcement.cronSchedule}\n\n`+
+                                `Button: "${button.text}" → ${button.url}\n\n`+
+                                `You can manage all announcements with /announcements`
+                              );
+                            } catch (error) {
+                              this.bot.sendMessage(
+                                chatId,
+                                `Error creating announcement: ${error.message}\n\nPlease try again.`
+                              );
+                            }
+                          });
+                        });
+                      });
+                    });
+                  } else {
+                    // User doesn't want to add a button
+                    try {
+                      const announcement = await this.announcements.addAnnouncement(
+                        this.pendingAnnouncements[msg.from.id].message,
+                        cronSchedule,
+                        this.pendingAnnouncements[msg.from.id].name
+                      );
+                      
+                      delete this.pendingAnnouncements[msg.from.id];
+                      
+                      this.bot.sendMessage(
+                        chatId,
+                        `✅ Announcement "${announcement.name}" created!\n\nScheduled for: ${announcement.cronSchedule}\n\nYou can manage all announcements with /announcements`
+                      );
+                    } catch (error) {
+                      this.bot.sendMessage(
+                        chatId,
+                        `Error creating announcement: ${error.message}\n\nPlease try again with a valid cron expression.`
+                      );
+                    }
+                  }
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+    
+    // Command to list and manage all announcements
+    this.bot.onText(/\/announcements/, async (msg) => {
+      const chatId = msg.chat.id;
+      
+      if (!this.isAuthorized(msg.from.id)) {
+        this.bot.sendMessage(chatId, 'You are not authorized to use this command.');
+        return;
+      }
+      
+      const announcements = this.announcements.getAnnouncements();
+      
+      if (announcements.length === 0) {
+        this.bot.sendMessage(
+          chatId,
+          'No announcements configured. Use /announce to create a new announcement.'
+        );
+        return;
+      }
+      
+      // Format the list of announcements with inline buttons
+      let message = '📣 *Text Announcements*\n\n';
+      
+      const inlineKeyboard = [];
+      
+      for (let i = 0; i < announcements.length; i++) {
+        const announcement = announcements[i];
+        
+        // Add announcement details to message
+        message += `*${i+1}. ${announcement.name}*\n`;
+        message += `Schedule: \`${announcement.cronSchedule}\`\n`;
+        message += `Last run: ${announcement.lastRun ? new Date(announcement.lastRun).toLocaleString() : 'Never'}\n`;
+        
+        // Show button info if present
+        if (announcement.button && announcement.button.text && announcement.button.url) {
+          message += `Button: "${announcement.button.text}" → ${announcement.button.url}\n`;
+        }
+        
+        message += `Message: "${announcement.message.substring(0, 50)}${announcement.message.length > 50 ? '...' : ''}"\n\n`;
+        
+        // Add buttons for this announcement
+        inlineKeyboard.push([
+          {
+            text: `▶️ Run #${i+1}`,
+            callback_data: `run_announcement_${announcement.id}`
+          },
+          {
+            text: `✏️ Edit #${i+1}`,
+            callback_data: `edit_announcement_${announcement.id}`
+          },
+          {
+            text: `❌ Delete #${i+1}`,
+            callback_data: `delete_announcement_${announcement.id}`
+          }
+        ]);
+      }
+      
+      // Add a button to create a new announcement
+      inlineKeyboard.push([
+        {
+          text: '➕ Add New Announcement',
+          callback_data: 'new_announcement'
+        }
+      ]);
+      
+      await this.bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: inlineKeyboard
+        }
+      });
+    });
+
     // Handle URL links
     this.bot.on('message', async (msg) => {
       if (msg.text && msg.text.startsWith('http')) {
         const chatId = msg.chat.id;
+        
+        // Skip processing if this is part of an announcement setup
+        const isInAnnouncementFlow = this.pendingAnnouncements && this.pendingAnnouncements[msg.from.id];
+        const isInButtonEditFlow = this.editingAnnouncementButton && this.editingAnnouncementButton[msg.from.id];
+        
+        if (isInAnnouncementFlow || isInButtonEditFlow) {
+          // This URL is part of an announcement setup, so we should not process it as a link
+          return;
+        }
         
         if (!this.isAuthorized(msg.from.id)) {
           this.bot.sendMessage(chatId, 'You are not authorized to use this bot.');
@@ -441,6 +675,381 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
               }
             } else {
               await this.bot.answerCallbackQuery(query.id, { text: 'Item not found' });
+            }
+            break;
+          }
+
+          // New announcement management callback handlers
+          case 'run': {
+            if (data[1] === 'announcement') {
+              const announcementId = data[2];
+              await this.bot.answerCallbackQuery(query.id, { text: 'Sending announcement...' });
+              
+              try {
+                const result = await this.announcements.sendAnnouncementNow(announcementId);
+                if (result) {
+                  await this.bot.sendMessage(chatId, `✅ Announcement sent successfully!`);
+                } else {
+                  await this.bot.sendMessage(chatId, `❌ Failed to send announcement.`);
+                }
+              } catch (error) {
+                await this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+              }
+              
+              // Refresh announcements list
+              await this.bot.deleteMessage(chatId, query.message.message_id);
+              await this.bot.onText.handlers.find(h => h.regexp.toString().includes('/announcements'))?._callback({ chat: { id: chatId } });
+            }
+            break;
+          }
+          
+          case 'delete': {
+            if (data[1] === 'announcement') {
+              const announcementId = data[2];
+              
+              // Get the announcement to show its name
+              const announcement = this.announcements.getAnnouncementById(announcementId);
+              if (!announcement) {
+                await this.bot.answerCallbackQuery(query.id, { text: 'Announcement not found.' });
+                return;
+              }
+              
+              // Show confirmation dialog
+              await this.bot.answerCallbackQuery(query.id);
+              
+              const confirmMessage = await this.bot.sendMessage(
+                chatId,
+                `Are you sure you want to delete the announcement "${announcement.name}"?`,
+                {
+                  reply_markup: {
+                    inline_keyboard: [
+                      [
+                        { text: '✅ Yes, delete it', callback_data: `confirm_delete_announcement_${announcementId}` },
+                        { text: '❌ No, cancel', callback_data: 'cancel_delete_announcement' }
+                      ]
+                    ]
+                  }
+                }
+              );
+            }
+            break;
+          }
+          
+          case 'confirm': {
+            if (data[1] === 'delete' && data[2] === 'announcement') {
+              const announcementId = data[3];
+              
+              try {
+                const result = await this.announcements.removeAnnouncement(announcementId);
+                if (result) {
+                  await this.bot.answerCallbackQuery(query.id, { text: 'Announcement deleted successfully.' });
+                } else {
+                  await this.bot.answerCallbackQuery(query.id, { text: 'Failed to delete announcement.' });
+                }
+                
+                // Delete confirmation message
+                await this.bot.deleteMessage(chatId, query.message.message_id);
+                
+                // Refresh announcements list
+                await this.bot.onText.handlers.find(h => h.regexp.toString().includes('/announcements'))?._callback({ chat: { id: chatId } });
+              } catch (error) {
+                await this.bot.answerCallbackQuery(query.id, { text: `Error: ${error.message}` });
+              }
+            }
+            break;
+          }
+          
+          case 'cancel': {
+            if (data[1] === 'delete' && data[2] === 'announcement') {
+              await this.bot.answerCallbackQuery(query.id, { text: 'Delete cancelled.' });
+              await this.bot.deleteMessage(chatId, query.message.message_id);
+            }
+            break;
+          }
+          
+          case 'edit': {
+            if (data[1] === 'announcement') {
+              const announcementId = data[2];
+              const announcement = this.announcements.getAnnouncementById(announcementId);
+              
+              if (!announcement) {
+                await this.bot.answerCallbackQuery(query.id, { text: 'Announcement not found.' });
+                return;
+              }
+              
+              await this.bot.answerCallbackQuery(query.id);
+              
+              // Show edit options
+              const editMessage = await this.bot.sendMessage(
+                chatId,
+                `Editing announcement: *${announcement.name}*\n\nWhat would you like to edit?`,
+                {
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                    inline_keyboard: [
+                      [
+                        { 
+                          text: '📝 Edit Message', 
+                          callback_data: `edit_announcement_message_${announcementId}` 
+                        }
+                      ],
+                      [
+                        { 
+                          text: '⏰ Edit Schedule', 
+                          callback_data: `edit_announcement_schedule_${announcementId}` 
+                        }
+                      ],
+                      [
+                        { 
+                          text: '🏷️ Edit Name', 
+                          callback_data: `edit_announcement_name_${announcementId}` 
+                        }
+                      ],
+                      [
+                        { 
+                          text: '🔗 Edit Button', 
+                          callback_data: `edit_announcement_button_${announcementId}` 
+                        }
+                      ],
+                      [
+                        { 
+                          text: '❌ Cancel', 
+                          callback_data: 'cancel_edit_announcement' 
+                        }
+                      ]
+                    ]
+                  }
+                }
+              );
+            } else if (data[1] === 'announcement' && (data[2] === 'message' || data[2] === 'name' || data[2] === 'schedule' || data[2] === 'button')) {
+              const field = data[2];
+              const announcementId = data[3];
+              const announcement = this.announcements.getAnnouncementById(announcementId);
+              
+              if (!announcement) {
+                await this.bot.answerCallbackQuery(query.id, { text: 'Announcement not found.' });
+                return;
+              }
+              
+              await this.bot.answerCallbackQuery(query.id);
+              
+              // Delete the edit options message
+              await this.bot.deleteMessage(chatId, query.message.message_id);
+              
+              let promptText = '';
+              switch (field) {
+                case 'message':
+                  promptText = `Please enter the new message text for the announcement "${announcement.name}":\n\nCurrent message:\n${announcement.message}`;
+                  break;
+                case 'name':
+                  promptText = `Please enter the new name for the announcement "${announcement.name}":`;
+                  break;
+                case 'schedule':
+                  promptText = `Please enter the new cron schedule for the announcement "${announcement.name}" (use https://crontab.guru/ for help):\n\nCurrent schedule: ${announcement.cronSchedule}`;
+                  break;
+                case 'button':
+                  // For button editing, we'll first ask if they want to add, edit, or remove a button
+                  const hasButton = announcement.button && announcement.button.text && announcement.button.url;
+                  
+                  if (hasButton) {
+                    // Show options to edit or remove existing button
+                    await this.bot.sendMessage(
+                      chatId,
+                      `Current button: "${announcement.button.text}" → ${announcement.button.url}\n\nWhat would you like to do?`,
+                      {
+                        reply_markup: {
+                          inline_keyboard: [
+                            [
+                              { 
+                                text: '✏️ Edit Button', 
+                                callback_data: `edit_announcement_button_edit_${announcementId}` 
+                              }
+                            ],
+                            [
+                              { 
+                                text: '❌ Remove Button', 
+                                callback_data: `edit_announcement_button_remove_${announcementId}` 
+                              }
+                            ],
+                            [
+                              { 
+                                text: '↩️ Cancel', 
+                                callback_data: 'cancel_edit_announcement_button' 
+                              }
+                            ]
+                          ]
+                        }
+                      }
+                    );
+                    return;
+                  } else {
+                    // No existing button, ask if they want to add one
+                    await this.bot.sendMessage(
+                      chatId,
+                      `This announcement doesn't have a button. Would you like to add one?`,
+                      {
+                        reply_markup: {
+                          inline_keyboard: [
+                            [
+                              { 
+                                text: '➕ Add Button', 
+                                callback_data: `edit_announcement_button_add_${announcementId}` 
+                              }
+                            ],
+                            [
+                              { 
+                                text: '↩️ Cancel', 
+                                callback_data: 'cancel_edit_announcement_button' 
+                              }
+                            ]
+                          ]
+                        }
+                      }
+                    );
+                    return;
+                  }
+              }
+            }
+            break;
+          }
+          
+          case 'new': {
+            if (data[1] === 'announcement') {
+              await this.bot.answerCallbackQuery(query.id);
+              
+              // Delete the announcements list message
+              await this.bot.deleteMessage(chatId, query.message.message_id);
+              
+              // Trigger the /announce command
+              await this.bot.sendMessage(
+                chatId,
+                'Please use the /announce command followed by your announcement text to create a new announcement.'
+              );
+            }
+            break;
+          }
+          
+          case 'cancel': {
+            if (data[1] === 'edit' && data[2] === 'announcement') {
+              await this.bot.answerCallbackQuery(query.id, { text: 'Edit cancelled.' });
+              await this.bot.deleteMessage(chatId, query.message.message_id);
+              
+              // Refresh announcements list
+              await this.bot.onText.handlers.find(h => h.regexp.toString().includes('/announcements'))?._callback({ chat: { id: chatId } });
+            }
+            break;
+          }
+          
+          case 'edit': {
+            if (data[1] === 'announcement' && data[2] === 'button') {
+              if (data[3] === 'add' || data[3] === 'edit') {
+                // Add or edit a button
+                const announcementId = data[4];
+                const announcement = this.announcements.getAnnouncementById(announcementId);
+                
+                if (!announcement) {
+                  await this.bot.answerCallbackQuery(query.id, { text: 'Announcement not found.' });
+                  return;
+                }
+                
+                await this.bot.answerCallbackQuery(query.id);
+                
+                // Delete the options message
+                await this.bot.deleteMessage(chatId, query.message.message_id);
+                
+                // Store the context for updating
+                this.editingAnnouncementButton = this.editingAnnouncementButton || {};
+                this.editingAnnouncementButton[query.from.id] = { id: announcementId };
+                
+                // First ask for button text
+                const buttonTextPrompt = await this.bot.sendMessage(
+                  chatId,
+                  'Please enter the button text:',
+                  { reply_markup: { force_reply: true } }
+                );
+                
+                this.bot.onReplyToMessage(chatId, buttonTextPrompt.message_id, async (buttonTextMsg) => {
+                  const buttonText = buttonTextMsg.text;
+                  
+                  // Now ask for the button URL
+                  const buttonUrlPrompt = await this.bot.sendMessage(
+                    chatId,
+                    'Please enter the button URL:',
+                    { reply_markup: { force_reply: true } }
+                  );
+                  
+                  this.bot.onReplyToMessage(chatId, buttonUrlPrompt.message_id, async (buttonUrlMsg) => {
+                    const buttonUrl = buttonUrlMsg.text;
+                    
+                    // Create the button object
+                    const button = {
+                      text: buttonText,
+                      url: buttonUrl
+                    };
+                    
+                    try {
+                      // Update the announcement with the new button
+                      const updated = await this.announcements.updateAnnouncement(announcementId, { button });
+                      
+                      if (updated) {
+                        await this.bot.sendMessage(
+                          chatId,
+                          `✅ Button ${data[3] === 'add' ? 'added' : 'updated'} successfully!`
+                        );
+                      } else {
+                        await this.bot.sendMessage(
+                          chatId,
+                          `❌ Failed to ${data[3] === 'add' ? 'add' : 'update'} button.`
+                        );
+                      }
+                      
+                      // Clean up
+                      delete this.editingAnnouncementButton[query.from.id];
+                      
+                      // Refresh announcements list
+                      await this.bot.onText.handlers.find(h => h.regexp.toString().includes('/announcements'))?._callback({ chat: { id: chatId } });
+                    } catch (error) {
+                      await this.bot.sendMessage(
+                        chatId,
+                        `❌ Error updating button: ${error.message}`
+                      );
+                    }
+                  });
+                });
+              } else if (data[3] === 'remove') {
+                // Remove a button
+                const announcementId = data[4];
+                
+                try {
+                  // Remove the button by setting it to null
+                  const updated = await this.announcements.updateAnnouncement(announcementId, { button: null });
+                  
+                  if (updated) {
+                    await this.bot.answerCallbackQuery(query.id, { text: 'Button removed successfully.' });
+                  } else {
+                    await this.bot.answerCallbackQuery(query.id, { text: 'Failed to remove button.' });
+                  }
+                  
+                  // Delete the options message
+                  await this.bot.deleteMessage(chatId, query.message.message_id);
+                  
+                  // Refresh announcements list
+                  await this.bot.onText.handlers.find(h => h.regexp.toString().includes('/announcements'))?._callback({ chat: { id: chatId } });
+                } catch (error) {
+                  await this.bot.answerCallbackQuery(query.id, { text: `Error: ${error.message}` });
+                }
+              }
+            }
+            break;
+          }
+          
+          case 'cancel': {
+            if (data[1] === 'edit' && data[2] === 'announcement' && data[3] === 'button') {
+              await this.bot.answerCallbackQuery(query.id, { text: 'Button edit cancelled.' });
+              await this.bot.deleteMessage(chatId, query.message.message_id);
+              
+              // Refresh announcements list
+              await this.bot.onText.handlers.find(h => h.regexp.toString().includes('/announcements'))?._callback({ chat: { id: chatId } });
             }
             break;
           }

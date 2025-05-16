@@ -201,8 +201,8 @@ ISC
 - [x] ATProto Implementation
 - [x] Basic e621 Scraper
 - [x] FurAffinity Scraper
-- [ ] SoFurry Scraper
-- [ ] Weasyl Scraper
+- [x] SoFurry Scraper
+- [x] Weasyl Scraper
 - [x] Interactive Graphical Queue Manager
 - [ ] Add perceptual hashing
 - [ ] Redo Queue Manager

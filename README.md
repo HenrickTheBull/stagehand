@@ -194,7 +194,7 @@ To add support for a new website:
 
 ## License
 
-ISC
+GPL V3
 
 ## ToDo List
 

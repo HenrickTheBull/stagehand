@@ -94,12 +94,16 @@ class AnnouncementManager {
     if (button && (!button.text || !button.url)) {
       throw new Error('Button must have both text and url properties');
     }
+    
+    // Store the raw message - ensure we preserve line breaks
+    // No additional processing, just use the message as-is
+    const rawMessage = message;
 
     // Create new announcement
     const id = Date.now().toString();
     const announcement = {
       id,
-      message,
+      message: rawMessage, // Use the raw message with preserved line breaks
       cronSchedule,
       name: name || `Announcement ${id.substring(id.length - 4)}`,
       createdAt: new Date().toISOString(),
@@ -163,6 +167,8 @@ class AnnouncementManager {
     
     // Update fields
     if (updates.message !== undefined) {
+      // Store the raw message exactly as received, preserving all line breaks
+      // Do not trim() as it can remove important whitespace
       announcement.message = updates.message;
     }
     
@@ -222,8 +228,12 @@ class AnnouncementManager {
       try {
         console.log(`Running scheduled announcement: ${announcement.name}`);
         
-        // Create message options with markdown support
-        const messageOptions = { parse_mode: 'Markdown' };
+        // Create message options with HTML support which handles line breaks better
+        const messageOptions = { parse_mode: 'HTML' };
+        
+        // Process the message to handle line breaks properly in HTML mode
+        // Convert line breaks to HTML breaks and escape any HTML entities
+        let processedMessage = this.formatMessageText(announcement.message);
         
         // Add inline keyboard if a button is defined
         if (announcement.button && announcement.button.text && announcement.button.url) {
@@ -242,7 +252,7 @@ class AnnouncementManager {
         // Send the announcement message to the channel
         const result = await this.telegramBot.bot.sendMessage(
           this.telegramBot.channelId, 
-          announcement.message,
+          processedMessage,
           messageOptions
         );
         
@@ -286,6 +296,34 @@ class AnnouncementManager {
   isValidCronExpression(cronExpression) {
     return cron.validate(cronExpression);
   }
+  
+  /**
+   * Format message text to properly handle line breaks and special formatting
+   * @param {string} text - The original message text
+   * @returns {string} - Formatted message text for Telegram
+   */
+  formatMessageText(text) {
+    if (!text) return '';
+    
+    // Escape HTML special characters
+    let formattedText = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+      
+    // Line breaks are preserved automatically in Telegram's HTML mode
+    // Do NOT replace newlines with <br/> tags as Telegram doesn't support them
+    
+    // Handle common markdown-style formatting with multiline support
+    // Process text in a way that handles multiline content properly
+    // Uses non-greedy quantifiers (.*?) and the 's' flag to match across multiple lines
+    formattedText = formattedText.replace(/\*\*([\s\S]*?)\*\*/g, '<b>$1</b>');
+    formattedText = formattedText.replace(/\*([\s\S]*?)\*/g, '<i>$1</i>');
+    formattedText = formattedText.replace(/__([\s\S]*?)__/g, '<u>$1</u>');
+    formattedText = formattedText.replace(/~~([\s\S]*?)~~/g, '<s>$1</s>');
+    
+    return formattedText;
+  }
 
   /**
    * Send an announcement immediately (one-time)
@@ -300,8 +338,11 @@ class AnnouncementManager {
     }
     
     try {
-      // Create message options with markdown support
-      const messageOptions = { parse_mode: 'Markdown' };
+      // Create message options with HTML support
+      const messageOptions = { parse_mode: 'HTML' };
+      
+      // Process the message to handle line breaks properly in HTML mode
+      let processedMessage = this.formatMessageText(announcement.message);
       
       // Add inline keyboard if a button is defined
       if (announcement.button && announcement.button.text && announcement.button.url) {
@@ -319,7 +360,7 @@ class AnnouncementManager {
       
       await this.telegramBot.bot.sendMessage(
         this.telegramBot.channelId, 
-        announcement.message,
+        processedMessage,
         messageOptions
       );
       

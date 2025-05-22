@@ -163,6 +163,8 @@ npm run dev
 - `/setcount [number]` - Set number of images per post interval
 - `/clear` - Clear the entire queue
 - `/cleancache` - Clean expired items from media cache
+- `/announce` - Create a new announcement
+- `/announcements` - Manage existing announcements
 
 ### Adding Images to Queue
 

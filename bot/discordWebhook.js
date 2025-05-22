@@ -10,8 +10,12 @@ const fs = require('fs').promises;
 class DiscordWebhook {
   constructor() {
     this.webhookUrl = config.discord?.webhookUrl;
+    this.enabled = config.discord?.enabled;
+    
     if (!this.webhookUrl) {
       console.warn('Discord webhook URL not configured. Discord integration disabled.');
+    } else if (this.enabled === false) {
+      console.log('Discord webhook URL is configured but integration is disabled in settings.');
     } else {
       console.log('Discord webhook integration initialized.');
     }
@@ -22,7 +26,8 @@ class DiscordWebhook {
    * @returns {boolean} - Whether Discord integration is enabled
    */
   isEnabled() {
-    return !!this.webhookUrl;
+    // Only return true if both the webhook URL is set AND explicitly enabled in config
+    return !!this.webhookUrl && this.enabled !== false;
   }
 
   /**

@@ -12,7 +12,8 @@ class BluskyScraper extends BaseScraper {
     // Initialize with service endpoint only - no authentication needed for public posts
     this.serviceEndpoint = config.bluesky.service || 'https://bsky.social';
     // Update regex to support bsky.app, deer.social, and sky.thebull.app
-    this.matcher = new RegExp('(?:https?://)?(?:bsky\\.app|deer\\.social|sky\\.thebull\\.app)/profile/(?<repo>\\S+)/post/(?<rkey>\\S+)');
+    // Also properly handle DIDs in the URL path
+    this.matcher = new RegExp('(?:https?://)?(?:bsky\\.app|deer\\.social|sky\\.thebull\\.app)/profile/(?<repo>[^/]+(?:/[^/]+)?)/post/(?<rkey>[^/]+)');
     
     // Initialize the agent
     this.agent = new BskyAgent({ service: this.serviceEndpoint });
@@ -29,9 +30,9 @@ class BluskyScraper extends BaseScraper {
   }
 
   /**
-   * Parse a Bluesky URL to extract handle and rkey (post ID)
+   * Parse a Bluesky URL to extract handle/DID and rkey (post ID)
    * @param {string} url - Bluesky URL
-   * @returns {{repo: string, rkey: string}} - Extracted repo (handle) and rkey
+   * @returns {{repo: string, rkey: string}} - Extracted repo (handle/DID) and rkey
    */
   parseBlueskyUrl(url) {
     try {
@@ -40,8 +41,20 @@ class BluskyScraper extends BaseScraper {
         throw new Error('Invalid Bluesky URL format');
       }
       
+      let repo = matches.groups.repo;
+      
+      // Special handling for DIDs in the URL
+      // Example: did:plc:pmrzhfxlsflj5vb63h27jmax
+      if (repo.includes('/')) {
+        // This might be a URL-encoded DID, so extract just the DID part
+        const didMatches = repo.match(/^(did:[^/]+)/) || repo.match(/^([^/]+\/[^/]+)$/);
+        if (didMatches && didMatches[1]) {
+          repo = didMatches[1];
+        }
+      }
+      
       return {
-        repo: matches.groups.repo,
+        repo: repo,
         rkey: matches.groups.rkey
       };
     } catch (error) {
@@ -50,27 +63,86 @@ class BluskyScraper extends BaseScraper {
   }
 
   /**
-   * Get user's display name from their handle
-   * @param {string} handle - The user's Bluesky handle
-   * @returns {Promise<string>} - User's display name or handle if not found
+   * Get user's display name from their handle or DID
+   * @param {string} identifier - The user's Bluesky handle or DID
+   * @returns {Promise<string>} - User's display name or original identifier if not found
    */
-  async getUserDisplayName(handle) {
+  async getUserDisplayName(identifier) {
     try {
-      // Try to get user info from API
-      const response = await axios.get(`${this.serviceEndpoint}/xrpc/app.bsky.actor.getProfile`, {
-        params: { actor: handle },
-        headers: { 'User-Agent': 'Stagehand/1.1.0' }
-      });
+      let did = identifier;
       
-      if (response.data && response.data.displayName) {
-        return response.data.displayName;
+      // Check if the identifier is a handle (contains a dot) rather than a DID
+      if (identifier.includes('.') && !identifier.startsWith('did:')) {
+        try {
+          // Convert handle to DID
+          const didResponse = await axios.get(`${this.serviceEndpoint}/xrpc/com.atproto.identity.resolveHandle`, {
+            params: { handle: identifier },
+            headers: { 'User-Agent': 'Stagehand/1.1.0' }
+          });
+          
+          if (didResponse.data && didResponse.data.did) {
+            did = didResponse.data.did;
+          } else {
+            console.log(`Failed to resolve handle to DID: ${identifier}`);
+            return identifier;
+          }
+        } catch (handleError) {
+          console.log(`Error resolving handle ${identifier}: ${handleError.message}`);
+          return identifier;
+        }
       }
       
-      // Return handle if display name not found
-      return handle;
+      // Now we have a DID (either provided or resolved from handle)
+      try {
+        // Access the profile directly using repo API - this is the most reliable method
+        const profileUrl = new URL(`${this.serviceEndpoint}/xrpc/com.atproto.repo.getRecord`);
+        profileUrl.searchParams.append('repo', did);
+        profileUrl.searchParams.append('collection', 'app.bsky.actor.profile');
+        profileUrl.searchParams.append('rkey', 'self');
+        
+        const profileResponse = await axios.get(profileUrl.toString(), {
+          headers: { 'User-Agent': 'Stagehand/1.1.0' }
+        });
+        
+        if (profileResponse.data && 
+            profileResponse.data.value && 
+            profileResponse.data.value.displayName) {
+          return profileResponse.data.value.displayName;
+        }
+        
+        // If we got a profile but no displayName, try to get the handle
+        if (profileResponse.data && 
+            profileResponse.data.value && 
+            profileResponse.data.value.handle) {
+          return profileResponse.data.value.handle;
+        }
+      } catch (profileError) {
+        console.log(`Error getting profile for ${did}: ${profileError.message}`);
+        
+        // If that fails, try the actor getProfile API as a fallback
+        try {
+          const actorResponse = await axios.get(`${this.serviceEndpoint}/xrpc/app.bsky.actor.getProfile`, {
+            params: { actor: did },
+            headers: { 'User-Agent': 'Stagehand/1.1.0' }
+          });
+          
+          if (actorResponse.data && actorResponse.data.displayName) {
+            return actorResponse.data.displayName;
+          }
+          
+          if (actorResponse.data && actorResponse.data.handle) {
+            return actorResponse.data.handle;
+          }
+        } catch (actorError) {
+          console.log(`Error with actor getProfile API for ${did}: ${actorError.message}`);
+        }
+      }
+      
+      // Return the original identifier if all methods fail
+      return identifier;
     } catch (error) {
-      console.log(`Couldn't get display name for ${handle}: ${error.message}`);
-      return handle; // Fallback to handle on error
+      console.log(`Couldn't get display name for ${identifier}: ${error.message}`);
+      return identifier; // Fallback to identifier on error
     }
   }
 
@@ -283,8 +355,53 @@ class BluskyScraper extends BaseScraper {
       }
 
       // 5. Get user's display name
-      const displayName = await this.getUserDisplayName(repo);
-      console.log(`Using display name: ${displayName} for handle: ${repo}`);
+      // First try to get the author's profile from the record itself if present
+      let displayName = repo; // Default to repo ID if we can't get a handle/display name
+      let handle = repo;
+      try {
+        // Try to get profile information directly from the repo
+        const profileUrl = new URL(`${this.serviceEndpoint}/xrpc/com.atproto.repo.getRecord`);
+        profileUrl.searchParams.append('repo', did);
+        profileUrl.searchParams.append('collection', 'app.bsky.actor.profile');
+        profileUrl.searchParams.append('rkey', 'self');
+        
+        const profileResponse = await axios.get(profileUrl.toString(), {
+          headers: { 'User-Agent': 'Stagehand/1.1.0' }
+        });
+        
+        if (profileResponse.data && profileResponse.data.value) {
+          // Extract display name and handle from the profile
+          if (profileResponse.data.value.displayName) {
+            displayName = profileResponse.data.value.displayName;
+          }
+          if (profileResponse.data.value.handle) {
+            handle = profileResponse.data.value.handle;
+          }
+        }
+      } catch (profileError) {
+        console.log(`Couldn't get profile directly: ${profileError.message}`);
+        // Fall back to resolving DID to handle
+        try {
+          const didToHandleUrl = new URL(`${this.serviceEndpoint}/xrpc/com.atproto.identity.resolveHandle`);
+          didToHandleUrl.searchParams.append('handle', did);
+          
+          const handleResponse = await axios.get(didToHandleUrl.toString(), {
+            headers: { 'User-Agent': 'Stagehand/1.1.0' }
+          });
+          
+          if (handleResponse.data && handleResponse.data.did) {
+            // We have a valid DID, now try to get the profile
+            const resolvedDisplayName = await this.getUserDisplayName(handleResponse.data.did);
+            if (resolvedDisplayName && resolvedDisplayName !== handleResponse.data.did) {
+              displayName = resolvedDisplayName;
+            }
+          }
+        } catch (didError) {
+          console.log(`Couldn't resolve DID to handle: ${didError.message}`);
+        }
+      }
+      
+      console.log(`Using display name: ${displayName} for handle: ${handle}`);
       
       // 6. Process based on embed type
       const embedType = record?.value?.embed?.$type;

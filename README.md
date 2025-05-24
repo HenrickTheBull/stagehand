@@ -161,6 +161,7 @@ npm run dev
 - `/send` - Post the next image in the queue immediately
 - `/schedule [cron]` - Set posting schedule using cron syntax
 - `/setcount [number]` - Set number of images per post interval
+- `/shuffle` - Toggle shuffle mode (randomizes queue after each post)
 - `/clear` - Clear the entire queue
 - `/cleancache` - Clean expired items from media cache
 - `/announce` - Create a new announcement
@@ -179,6 +180,7 @@ The `/queue` command displays an interactive visual interface for managing queue
 - **Item Removal**: Remove specific items from the queue with a single click
 - **Reordering**: Move any item to the top of the queue to be posted next
 - **Pagination**: Easily navigate through pages of queued items
+- **Shuffle Mode**: Automatically randomize the queue after each post with `/shuffle` command
 
 The interface shows important information about each queued item including:
 - Item position in queue
@@ -206,6 +208,7 @@ GPL V3
 - [x] SoFurry Scraper
 - [x] Weasyl Scraper
 - [x] Interactive Graphical Queue Manager
+- [x] Add shuffle mode for queue
 - [ ] Add perceptual hashing
 - [ ] Redo Queue Manager
 - [ ] Redo Bluesky Module

@@ -47,6 +47,7 @@ Stagehand Bot Commands:
 /cleancache - Clean expired items from media cache
 /announce - Create a new announcement
 /announcements - Manage existing announcements
+/shuffle - Toggle shuffle mode (shuffles queue after each post)
 /update - Update bot from GitHub repository (owner only)
 
 Send any link to a supported site to add it to the queue.
@@ -243,7 +244,25 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
       
       this.bot.sendMessage(chatId, `Queue cleared (${queueLength} items removed).`);
     });
-
+    
+    // Command to toggle shuffle mode
+    this.bot.onText(/\/shuffle/, async (msg) => {
+      const chatId = msg.chat.id;
+      
+      if (!this.isAuthorized(msg.from.id)) {
+        this.bot.sendMessage(chatId, 'You are not authorized to use this command.');
+        return;
+      }
+      
+      const isEnabled = queueManager.toggleShuffleMode();
+      
+      if (isEnabled) {
+        this.bot.sendMessage(chatId, '🔀 Shuffle mode enabled! Queue will be randomized after each post.');
+      } else {
+        this.bot.sendMessage(chatId, '📋 Shuffle mode disabled. Queue will maintain its order.');
+      }
+    });
+    
     // Command to manually trigger an update from GitHub
     this.bot.onText(/\/update/, async (msg) => {
       const chatId = msg.chat.id;
@@ -360,7 +379,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
                   chatId,
                   "Here's a preview of your announcement with formatting:",
                   { parse_mode: 'Markdown' }
-                );
+                ),
                 
                 // Send the actual preview
                 await this.bot.sendMessage(
@@ -815,7 +834,7 @@ Supported sites: e621, FurAffinity, SoFurry, Weasyl, Bluesky
                     ]
                   }
                 }
-              );
+                );
             }
             break;
           }

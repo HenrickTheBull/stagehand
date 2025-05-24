@@ -14,6 +14,7 @@ class QueueManager {
     this.autoSaveInterval = null;
     this.queueData = { queue: [] };
     this.postServices = ['telegram'];
+    this.shuffleMode = false; // Whether queue should be shuffled after item removal
     
     // Add Discord to services if enabled
     if (config.discord?.enabled) {
@@ -233,9 +234,17 @@ class QueueManager {
       if (allPosted) {
         const removed = this.queueData.queue.splice(index, 1)[0];
         console.log(`All services posted item: ${removed.title}, removed from queue`);
+        
+        // If shuffle mode is enabled and there are items remaining in the queue, shuffle them
+        if (this.shuffleMode && this.queueData.queue.length > 1) {
+          await this.shuffleQueue();
+        } else {
+          await this.saveQueueToDisk();
+        }
+      } else {
+        await this.saveQueueToDisk();
       }
       
-      await this.saveQueueToDisk();
       return true;
     } catch (error) {
       console.error('Error marking item as posted:', error);
@@ -409,6 +418,54 @@ class QueueManager {
   async shutdown() {
     this.stopScheduler();
     return this.saveQueueToDisk();
+  }
+
+  /**
+   * Toggle shuffle mode on/off
+   * @returns {boolean} - New state of shuffle mode
+   */
+  toggleShuffleMode() {
+    this.shuffleMode = !this.shuffleMode;
+    console.log(`Queue shuffle mode ${this.shuffleMode ? 'enabled' : 'disabled'}`);
+    return this.shuffleMode;
+  }
+
+  /**
+   * Get current state of shuffle mode
+   * @returns {boolean} - Current state of shuffle mode
+   */
+  isShuffleModeEnabled() {
+    return this.shuffleMode;
+  }
+
+  /**
+   * Shuffle the remaining items in the queue using Fisher-Yates algorithm
+   * @returns {Promise<boolean>} - Whether shuffle was successful
+   */
+  async shuffleQueue() {
+    try {
+      if (this.queueData.queue.length <= 1) {
+        // No need to shuffle if queue is empty or has only one item
+        return true;
+      }
+
+      const queue = this.queueData.queue;
+      
+      // Fisher-Yates (Knuth) shuffle algorithm
+      for (let i = queue.length - 1; i > 0; i--) {
+        // Generate random index between 0 and i (inclusive)
+        const j = Math.floor(Math.random() * (i + 1));
+        // Swap elements at i and j
+        [queue[i], queue[j]] = [queue[j], queue[i]];
+      }
+
+      console.log(`Queue shuffled (${queue.length} items)`);
+      await this.saveQueueToDisk();
+      return true;
+    } catch (error) {
+      console.error('Error shuffling queue:', error);
+      return false;
+    }
   }
 }
 
